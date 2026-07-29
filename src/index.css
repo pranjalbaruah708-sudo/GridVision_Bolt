@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --navy: #1a3361;
+  --navy-dark: #142851;
+  --blue: #1d52b4;
+  --blue-light: #e8f0fe;
+  --accent: #1d4ed8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #f0f2f7;
+  color: #1a1a2e;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Scrollbar suppression */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Mobile safe bottom padding */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* Smooth scrolling */
+* { scroll-behavior: smooth; }
+
+/* Sign-in entrance */
+@keyframes gv-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.gv-fade-up { animation: gv-fade-up 0.5s ease-out both; }
+.gv-fade-up-delay-1 { animation: gv-fade-up 0.5s ease-out 0.08s both; }
+.gv-fade-up-delay-2 { animation: gv-fade-up 0.5s ease-out 0.16s both; }
