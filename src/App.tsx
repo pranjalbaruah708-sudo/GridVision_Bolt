@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AppProvider } from '@/context/AppContext';
 import { useRouter } from '@/hooks/useRouter';
 import { useAuth } from '@/hooks/useAuth';
@@ -13,10 +13,15 @@ import { MorePage } from '@/pages/MorePage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SignInPage } from '@/pages/SignInPage';
 import { Loader2 } from 'lucide-react';
+import { ModuleSelectionPage } from '@/pages/ModuleSelectionPage';
+
 
 function Shell() {
   const { route, go, back } = useRouter();
   const auth = useAuth();
+  const [selectedModule, setSelectedModule] = useState<
+  'manual' | 'scada' | null
+>(null);
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
@@ -32,9 +37,30 @@ function Shell() {
     );
   }
 
-  if (!auth.session) {
-    return <SignInPage auth={auth} />;
-  }
+ if (!auth.session) {
+  return <SignInPage auth={auth} />;
+}
+
+if (!selectedModule) {
+  return (
+    <ModuleSelectionPage
+      username={
+        auth.user?.user_metadata?.full_name ??
+        auth.user?.email?.split('@')[0] ??
+        'User'
+      }
+      role="System Operator"
+      permissions={{
+        manual: true,
+        scada: true,
+      }}
+      onSelectModule={(module) => {
+        setSelectedModule(module);
+        go({ tab: 'dashboard' });
+      }}
+    />
+  );
+}
 
 /*
 if (!auth.session) {

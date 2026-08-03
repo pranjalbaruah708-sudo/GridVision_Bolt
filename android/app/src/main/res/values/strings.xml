@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">GridVision</string>
+    <string name="title_activity_main">GridVision</string>
+    <string name="package_name">com.gridvision.app</string>
+    <string name="custom_url_scheme">com.gridvision.app</string>
+</resources>
