@@ -23,7 +23,7 @@ export function ModuleSelectionPage({
 
       {/* Status/Header */}
 
-      <div className="rounded-b-3xl bg-[#0d3d8f] px-4 pt-3 pb-5 shadow-lg">
+      <div className="rounded-b-[32px] bg-blue-700 px-4 pt-3 pb-8 shadow-lg">
 
         {/* Fake Status Bar */}
 
@@ -98,9 +98,9 @@ export function ModuleSelectionPage({
 
       {/* Main Card */}
 
-    <div className="px-4 -mt-2">
+    <div className="px-4 -mt-5">
 
-    <div className="rounded-3xl bg-white p-5 shadow-xl shadow-slate-200/70">
+    <div className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_40px_-12px_rgba(15,23,42,0.18)]">
         <h3 className="mb-4 text-xl font-bold text-slate-800">
           Choose Module
         </h3>
@@ -280,7 +280,7 @@ export function ModuleSelectionPage({
         </div>
                 {/* Bottom Spacing */}
 
-        <div className="h-24" />
+        <div className="h-20" />
 
       </div>
 

@@ -3,7 +3,7 @@ import { Screen, PageBody } from '@/components/ui/Page';
 import { useApp } from '@/context/AppContext';
 import type { Tab } from '@/components/BottomNav';
 
-export function DashboardPage({ onNavigate }: { onNavigate: (t: Tab) => void }) {
+export function DashboardPage({ onNavigate, onBackToOptions }: { onNavigate: (t: Tab) => void; onBackToOptions: () => void }) {
   const { stations, activeStationId, setActiveStationId, activeStation } = useApp();
 
   return (
@@ -36,6 +36,16 @@ export function DashboardPage({ onNavigate }: { onNavigate: (t: Tab) => void }) 
       {/* White body that lifts over the navy header */}
       <PageBody>
         <div className="-mt-6 space-y-4">
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              onBackToOptions();
+            }}
+            className="inline-block rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Back to Options
+          </a>
           <div className="rounded-2xl bg-white p-5 shadow-lg">
             <h2 className="text-lg font-bold text-gray-900">Welcome to GridVision</h2>
             <p className="mt-1 text-sm text-gray-500 leading-relaxed">

@@ -14,6 +14,7 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { SignInPage } from '@/pages/SignInPage';
 import { Loader2 } from 'lucide-react';
 import { ModuleSelectionPage } from '@/pages/ModuleSelectionPage';
+import { ModuleSelectionReplicaPage } from '@/pages/ModuleSelectionReplicaPage';
 
 
 function Shell() {
@@ -29,6 +30,12 @@ function Shell() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!auth.session) {
+      setSelectedModule(null);
+    }
+  }, [auth.session]);
+
   if (auth.loading) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#142851]">
@@ -43,7 +50,7 @@ function Shell() {
 
 if (!selectedModule) {
   return (
-    <ModuleSelectionPage
+    <ModuleSelectionReplicaPage
       username={
         auth.user?.user_metadata?.full_name ??
         auth.user?.email?.split('@')[0] ??
@@ -101,7 +108,12 @@ return (
 
  return (
     <>
-      {route.tab === 'dashboard' && <DashboardPage onNavigate={(t) => go({ tab: t })} />}
+      {route.tab === 'dashboard' && (
+        <DashboardPage
+          onNavigate={(t) => go({ tab: t })}
+          onBackToOptions={() => setSelectedModule(null)}
+        />
+      )}
       {route.tab === 'analytics' && <AnalyticsPage />}
       {route.tab === 'alerts' && <AlertsPage />}
       {route.tab === 'reports' && (
@@ -110,7 +122,10 @@ return (
       {route.tab === 'more' && (
         <MorePage
           userEmail={auth.user?.email ?? null}
-          onSignOut={() => void auth.signOut()}
+          onSignOut={() => {
+            setSelectedModule(null);
+            void auth.signOut();
+          }}
           onOpen={(id) => {
             if (id === 'operator-entry') go({ tab: 'more', sub: 'operator-entry' });
             else if (id === 'settings') go({ tab: 'more', sub: 'settings' });

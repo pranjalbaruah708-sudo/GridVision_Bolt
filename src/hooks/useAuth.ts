@@ -22,11 +22,12 @@ export function useAuth(): AuthState {
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-  console.log("Auth event:", event);
-  console.log("Session:", session);
+      console.log("Auth event:", event);
+      console.log("Session:", session);
 
-  setSession(session);
-});
+      setSession(session);
+    });
+
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -38,10 +39,19 @@ export function useAuth(): AuthState {
     if (error) throw error;
   }, []);
 
+  const clearHash = useCallback(() => {
+    if (!window.location.hash) return;
+
+    const cleanUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+    window.location.hash = '';
+    window.history.replaceState(null, '', cleanUrl);
+  }, []);
+
   const signOut = useCallback(async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-  }, []);
+    clearHash();
+  }, [clearHash]);
 
   return {
     session,

@@ -26,6 +26,10 @@ export function useRouter() {
   }, []);
 
   const go = useCallback((r: Route) => {
+    if (r.tab === 'dashboard' && !r.sub) {
+      window.location.hash = '';
+      return;
+    }
     window.location.hash = r.sub ? `#/${r.tab}/${r.sub}` : `#/${r.tab}`;
   }, []);
 
