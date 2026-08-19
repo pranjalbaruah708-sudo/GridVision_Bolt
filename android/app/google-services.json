@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "7702554036",
+    "project_id": "gridvision-81972",
+    "storage_bucket": "gridvision-81972.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:7702554036:android:772b5a98d29afc0f563ee1",
+        "android_client_info": {
+          "package_name": "com.gridvision.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA6wm09cTMk1zz3lH13lI3jSS8CBu7vmNg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

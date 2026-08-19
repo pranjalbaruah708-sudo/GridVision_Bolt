@@ -36,16 +36,6 @@ export function DashboardPage({ onNavigate, onBackToOptions }: { onNavigate: (t:
       {/* White body that lifts over the navy header */}
       <PageBody>
         <div className="-mt-6 space-y-4">
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              onBackToOptions();
-            }}
-            className="inline-block rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            Back to Options
-          </a>
           <div className="rounded-2xl bg-white p-5 shadow-lg">
             <h2 className="text-lg font-bold text-gray-900">Welcome to GridVision</h2>
             <p className="mt-1 text-sm text-gray-500 leading-relaxed">
@@ -76,7 +66,7 @@ export function DashboardPage({ onNavigate, onBackToOptions }: { onNavigate: (t:
             />
             <QuickCard
               title="Reports"
-              desc="Generate & export"
+              desc="Generate & eexport"
               color="bg-emerald-600"
               onClick={() => onNavigate('reports')}
             />
@@ -87,6 +77,7 @@ export function DashboardPage({ onNavigate, onBackToOptions }: { onNavigate: (t:
               onClick={() => onNavigate('more')}
             />
           </div>
+          
 
           {/* Station quick switch */}
           <div className="rounded-2xl bg-white p-4 shadow-sm">
@@ -108,14 +99,21 @@ export function DashboardPage({ onNavigate, onBackToOptions }: { onNavigate: (t:
             </div>
           </div>
 
-          <button
-            onClick={() => onNavigate('analytics')}
-            className="flex w-full items-center justify-center gap-1 text-sm font-medium text-blue-700"
-          >
-            Go to Analytics <ArrowRight className="h-4 w-4" />
-          </button>
+          
         </div>
       </PageBody>
+      <div className="fixed bottom-16 left-0 right-0 z-40 flex justify-center">
+        <a
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            onBackToOptions();
+          }}
+          className="text-sm font-semibold text-slate-700 bg-white/95 border border-slate-200 px-4 py-1.5 rounded-full shadow-sm hover:bg-slate-50"
+        >
+          Back to Options1
+        </a>
+      </div>
     </Screen>
   );
 }
