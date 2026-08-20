@@ -1,44 +1,72 @@
 import { useEffect, useState } from 'react';
+
 import { AppProvider } from '@/context/AppContext';
 import { useRouter } from '@/hooks/useRouter';
 import { useAuth } from '@/hooks/useAuth';
+
 import { BottomNav } from '@/components/BottomNav';
+
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DashboardLogbookPage } from '@/pages/DashboardLogbookPage';
 import AnalysisLogbook1 from '@/pages/AnalysisLogbook1';
+
 import { AlertsPage } from '@/pages/AlertsPage';
 import { ReportsPage } from '@/pages/ReportsPage';
 import { LogBookReportPage } from '@/pages/LogBookReportPage';
+
 import { OperatorEntryPage } from '@/pages/OperatorEntryPage';
+import { InterruptionEntryPage } from '@/pages/InterruptionEntryPage';
+
 import { MorePage } from '@/pages/MorePage';
 import { SettingsPage } from '@/pages/SettingsPage';
+
 import { SignInPage } from '@/pages/SignInPage';
 import { ModuleSelectionReplicaPage } from '@/pages/ModuleSelectionReplicaPage';
-import { Loader2 } from 'lucide-react';
+
 import { NotificationTestPage } from '@/pages/NotificationTestPage';
 
-import { deactivateCurrentDeviceToken } from '@/pushNotifications';
+import { Loader2 } from 'lucide-react';
+
+import {
+  deactivateCurrentDeviceToken,
+} from '@/pushNotifications';
 
 
 function Shell() {
   const { route, go, back } = useRouter();
   const auth = useAuth();
 
-  const [selectedModule, setSelectedModule] = useState<
-    'manual' | 'scada' | null
-  >(null);
+  const [selectedModule, setSelectedModule] =
+    useState<'manual' | 'scada' | null>(null);
+
+
+  // ======================================================
+  // SERVICE WORKER
+  // ======================================================
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+      navigator.serviceWorker
+        .register('/sw.js')
+        .catch(() => undefined);
     }
   }, []);
+
+
+  // ======================================================
+  // RESET MODULE AFTER LOGOUT
+  // ======================================================
 
   useEffect(() => {
     if (!auth.session) {
       setSelectedModule(null);
     }
   }, [auth.session]);
+
+
+  // ======================================================
+  // AUTH LOADING
+  // ======================================================
 
   if (auth.loading) {
     return (
@@ -48,9 +76,19 @@ function Shell() {
     );
   }
 
+
+  // ======================================================
+  // SIGN IN
+  // ======================================================
+
   if (!auth.session) {
     return <SignInPage auth={auth} />;
   }
+
+
+  // ======================================================
+  // MODULE SELECTION
+  // ======================================================
 
   if (!selectedModule) {
     return (
@@ -65,68 +103,146 @@ function Shell() {
           manual: true,
           scada: true,
         }}
-        onSelectModule={(module) => setSelectedModule(module)}
+        onSelectModule={(module) =>
+          setSelectedModule(module)
+        }
       />
     );
   }
 
-  // ---------------- Sub Pages ----------------
 
-  if (route.tab === 'reports' && route.sub === 'log-book') {
+  // ======================================================
+  // SUB PAGES
+  // ======================================================
+
+
+  // ------------------------------------------------------
+  // LOG BOOK REPORT
+  // ------------------------------------------------------
+
+  if (
+    route.tab === 'reports' &&
+    route.sub === 'log-book'
+  ) {
     return (
       <>
         <LogBookReportPage onBack={back} />
 
         <BottomNav
           active="reports"
-          onNavigate={(tab) => go({ tab })}
+          onNavigate={(tab) =>
+            go({ tab })
+          }
         />
       </>
     );
   }
 
-  if (route.tab === 'more' && route.sub === 'operator-entry') {
+
+  // ------------------------------------------------------
+  // OPERATOR ENTRY
+  // ------------------------------------------------------
+
+  if (
+    route.tab === 'more' &&
+    route.sub === 'operator-entry'
+  ) {
     return (
       <>
-        <OperatorEntryPage onBack={back} />
+        <OperatorEntryPage
+          onBack={back}
+        />
 
         <BottomNav
           active="more"
-          onNavigate={(tab) => go({ tab })}
+          onNavigate={(tab) =>
+            go({ tab })
+          }
         />
       </>
     );
   }
 
-  if (route.tab === 'more' && route.sub === 'settings') {
+
+  // ------------------------------------------------------
+  // INTERRUPTION ENTRY
+  // ------------------------------------------------------
+
+  if (
+    route.tab === 'more' &&
+    route.sub === 'interruption-entry'
+  ) {
+    return (
+      <>
+        <InterruptionEntryPage
+          onBack={back}
+        />
+
+        <BottomNav
+          active="more"
+          onNavigate={(tab) =>
+            go({ tab })
+          }
+        />
+      </>
+    );
+  }
+
+
+  // ------------------------------------------------------
+  // SETTINGS
+  // ------------------------------------------------------
+
+  if (
+    route.tab === 'more' &&
+    route.sub === 'settings'
+  ) {
     return (
       <>
         <SettingsPage onBack={back} />
 
         <BottomNav
           active="more"
-          onNavigate={(tab) => go({ tab })}
+          onNavigate={(tab) =>
+            go({ tab })
+          }
         />
       </>
     );
   }
 
-  if (route.tab === 'more' && route.sub === 'notification-test') {
+
+  // ------------------------------------------------------
+  // NOTIFICATION TEST
+  // ------------------------------------------------------
+
+  if (
+    route.tab === 'more' &&
+    route.sub === 'notification-test'
+  ) {
     return (
       <>
-        <NotificationTestPage onBack={back}/>
+        <NotificationTestPage
+          onBack={back}
+        />
 
         <BottomNav
           active="more"
-          onNavigate={(tab) => go({ tab })}
+          onNavigate={(tab) =>
+            go({ tab })
+          }
         />
       </>
     );
   }
 
-  // ---------------- Main Pages ----------------
+
+  // ======================================================
+  // MAIN PAGES
+  // ======================================================
 
   let page: React.ReactNode;
+
 
   switch (route.tab) {
 
@@ -135,15 +251,22 @@ function Shell() {
     // --------------------------------------------------
 
     case 'dashboard':
-      console.log('Rendering Dashboard');
+
+      console.log(
+        'Rendering Dashboard'
+      );
 
       page =
         selectedModule === 'manual' ? (
           <DashboardLogbookPage />
         ) : (
           <DashboardPage
-            onNavigate={(tab) => go({ tab })}
-            onBackToOptions={() => setSelectedModule(null)}
+            onNavigate={(tab) =>
+              go({ tab })
+            }
+            onBackToOptions={() =>
+              setSelectedModule(null)
+            }
           />
         );
 
@@ -155,11 +278,15 @@ function Shell() {
     // --------------------------------------------------
 
     case 'analytics':
+
       page = (
         <AnalysisLogbook1
           onBack={() => {
             setSelectedModule(null);
-            go({ tab: 'dashboard' });
+
+            go({
+              tab: 'dashboard',
+            });
           }}
         />
       );
@@ -172,11 +299,15 @@ function Shell() {
     // --------------------------------------------------
 
     case 'alerts':
+
       page = (
         <AlertsPage
           onBack={() => {
             setSelectedModule(null);
-            go({ tab: 'dashboard' });
+
+            go({
+              tab: 'dashboard',
+            });
           }}
         />
       );
@@ -189,12 +320,17 @@ function Shell() {
     // --------------------------------------------------
 
     case 'reports':
+
       page = (
         <ReportsPage
           onBack={() => {
             setSelectedModule(null);
-            go({ tab: 'dashboard' });
+
+            go({
+              tab: 'dashboard',
+            });
           }}
+
           onOpenReport={() =>
             go({
               tab: 'reports',
@@ -212,30 +348,32 @@ function Shell() {
     // --------------------------------------------------
 
     case 'more':
+
       page = (
         <MorePage
-          userEmail={auth.user?.email ?? null}
+          userEmail={
+            auth.user?.email ?? null
+          }
 
-          // ------------------------------------------------
+          // --------------------------------------------
           // LOGOUT
           //
           // First deactivate THIS device's FCM token.
           // Then sign out from Supabase.
-          // ------------------------------------------------
+          // --------------------------------------------
 
           onSignOut={async () => {
             try {
-              console.log('🚪 Starting logout...');
+              console.log(
+                '🚪 Starting logout...'
+              );
 
-              // Deactivate only the FCM token belonging
-              // to this currently authenticated device.
               await deactivateCurrentDeviceToken();
 
               console.log(
                 '✅ Device token deactivated successfully.'
               );
 
-              // Now sign out from Supabase.
               setSelectedModule(null);
 
               await auth.signOut();
@@ -252,49 +390,84 @@ function Shell() {
             }
           }}
 
+
+          // --------------------------------------------
+          // MORE PAGE NAVIGATION
+          // --------------------------------------------
+
           onOpen={(id) => {
+
             switch (id) {
 
               case 'operator-entry':
+
                 go({
                   tab: 'more',
                   sub: 'operator-entry',
                 });
+
                 break;
 
+
+              case 'interruption-entry':
+
+                go({
+                  tab: 'more',
+                  sub: 'interruption-entry',
+                });
+
+                break;
+
+
               case 'settings':
+
                 go({
                   tab: 'more',
                   sub: 'settings',
                 });
+
                 break;
 
+
               case 'analytics':
+
                 go({
                   tab: 'analytics',
                 });
+
                 break;
 
+
               case 'notification-test':
+
                 go({
                   tab: 'more',
                   sub: 'notification-test',
                 });
+
                 break;
 
+
               case 'reports':
+
                 go({
                   tab: 'reports',
                 });
+
                 break;
 
+
               case 'alerts':
+
                 go({
                   tab: 'alerts',
                 });
+
                 break;
 
+
               default:
+
                 break;
             }
           }}
@@ -309,18 +482,29 @@ function Shell() {
     // --------------------------------------------------
 
     default:
+
       page =
         selectedModule === 'manual' ? (
           <DashboardLogbookPage />
         ) : (
           <DashboardPage
-            onNavigate={(tab) => go({ tab })}
-            onBackToOptions={() => setSelectedModule(null)}
+            onNavigate={(tab) =>
+              go({ tab })
+            }
+
+            onBackToOptions={() =>
+              setSelectedModule(null)
+            }
           />
         );
 
       break;
   }
+
+
+  // ======================================================
+  // PAGE + BOTTOM NAVIGATION
+  // ======================================================
 
   return (
     <>
@@ -328,16 +512,18 @@ function Shell() {
 
       <BottomNav
         active={route.tab}
-        onNavigate={(tab) => go({ tab })}
+        onNavigate={(tab) =>
+          go({ tab })
+        }
       />
     </>
   );
 }
 
 
-// ======================================================
+// ========================================================
 // APP
-// ======================================================
+// ========================================================
 
 export default function App() {
   return (
