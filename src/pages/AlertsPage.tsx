@@ -74,18 +74,20 @@ export function AlertsPage({
           id: `i-${i.id}`,
 
           kind: (
-            i.status === "open"
+            i.current_status === "OPEN"
               ? "critical"
               : "info"
           ) as AlertKind,
 
-          title: `${i.reason}`,
+         title: i.cause ?? "Interruption",
 
           message:
-            i.status === "open"
+            i.current_status === "OPEN"
               ? "Supply interrupted — restoration in progress"
               : `Restored after ${
-                  i.duration_hours?.toFixed(1) ?? "—"
+                 i.duration_minutes !== null
+  ? `${Math.round(i.duration_minutes)} min`
+  : "—"
                 }h`,
 
           station:
@@ -93,7 +95,7 @@ export function AlertsPage({
               (s) => s.id === i.station_id
             )?.name ?? "—",
 
-          time: i.started_at,
+        time: i.interruption_start,
         })),
       ];
 

@@ -3,7 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
-} from "react";
+} from 'react';
 
 import {
   ArrowLeft,
@@ -15,55 +15,153 @@ import {
   AlertTriangle,
   CheckCircle2,
   X,
-  Info,
-} from "lucide-react";
+} from 'lucide-react';
 
-import { api } from "@/services/api";
-import { useApp } from "@/context/AppContext";
-import type { Interruption } from "@/types";
+import { api } from '@/services/api';
+import { supabase } from '@/services/supabase';
+import { useApp } from '@/context/AppContext';
+
+import type {
+  Feeder,
+  Interruption,
+} from '@/types';
 
 /* =========================================================
    INTERRUPTION REASONS
-
-   These values intentionally match the reason categories
-   already used by the Analytics module.
 ========================================================= */
 
 const INTERRUPTION_REASONS = [
-  "Equipment Fault",
-  "External Fault",
-  "Scheduled Work",
-  "Overload",
-  "Others",
+  'Equipment Fault',
+  'External Fault',
+  'Scheduled Work',
+  'Overload',
+  'Others',
 ] as const;
 
 /* =========================================================
-   HELPERS
+   DATABASE INTERRUPTION VIEW
+========================================================= */
+
+type DbInterruption = Interruption & {
+  id: string;
+  station_id: string;
+  feeder_id?: string | null;
+  operator_id?: string | null;
+
+  interruption_start?: string;
+  interruption_end?: string | null;
+
+  current_status?:
+    | 'OPEN'
+    | 'RESTORED'
+    | 'CANCELLED';
+
+  cause?: string | null;
+  remarks?: string | null;
+
+  duration_minutes?: number | null;
+  etr?: string | null;
+};
+
+/* =========================================================
+   DATE / TIME HELPERS
 ========================================================= */
 
 function currentLocalDateTime(): string {
   const now = new Date();
 
-  const offset = now.getTimezoneOffset();
-  const local = new Date(now.getTime() - offset * 60_000);
+  const offset =
+    now.getTimezoneOffset();
 
-  return local.toISOString().slice(0, 16);
+  const local = new Date(
+    now.getTime() -
+      offset * 60_000
+  );
+
+  return local
+    .toISOString()
+    .slice(0, 16);
 }
 
-function localInputToISO(value: string): string {
-  return new Date(value).toISOString();
+function localInputToISO(
+  value: string
+): string {
+  return new Date(
+    value
+  ).toISOString();
 }
 
-function formatDateTime(value?: string | null): string {
-  if (!value) return "—";
+function formatDateTime(
+  value?: string | null
+): string {
+  if (!value) {
+    return '—';
+  }
 
-  return new Date(value).toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return new Date(
+    value
+  ).toLocaleString(
+    'en-IN',
+    {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }
+  );
+}
+
+/* =========================================================
+   INTERRUPTION FIELD HELPERS
+========================================================= */
+
+function getInterruptionStart(
+  interruption: Interruption
+): string | null {
+  const row =
+    interruption as DbInterruption;
+
+  return (
+    row.interruption_start ??
+    null
+  );
+}
+
+function getInterruptionFeederId(
+  interruption: Interruption
+): string | null {
+  const row =
+    interruption as DbInterruption;
+
+  return (
+    row.feeder_id ??
+    null
+  );
+}
+
+function getInterruptionCause(
+  interruption: Interruption
+): string {
+  const row =
+    interruption as DbInterruption;
+
+  return (
+    row.cause ??
+    '—'
+  );
+}
+
+function getInterruptionRemarks(
+  interruption: Interruption
+): string | null {
+  const row =
+    interruption as DbInterruption;
+
+  return (
+    row.remarks ??
+    null
+  );
 }
 
 /* =========================================================
@@ -76,181 +174,595 @@ export function InterruptionEntryPage({
   onBack: () => void;
 }) {
   const {
-    activeStationId,
-    activeStation,
-    activeFeeders,
+    stations,
   } = useApp();
 
-  /* ---------------------------------------------------------
-     New interruption form
-  --------------------------------------------------------- */
+  /* =======================================================
+     LOGGED-IN OPERATOR
+  ======================================================= */
 
-  const [feederId, setFeederId] = useState("");
-  const [reason, setReason] = useState("");
-  const [tripTime, setTripTime] = useState(
+  const [
+    operatorUserId,
+    setOperatorUserId,
+  ] = useState<
+    string | null
+  >(null);
+
+  /* =======================================================
+     OPERATOR STATION
+  ======================================================= */
+
+  const [
+    operatorStationId,
+    setOperatorStationId,
+  ] = useState<
+    string | null
+  >(null);
+
+  const [
+    operatorStationName,
+    setOperatorStationName,
+  ] = useState(
+    'Loading station...'
+  );
+
+  const [
+    stationFeeders,
+    setStationFeeders,
+  ] = useState<
+    Feeder[]
+  >([]);
+
+  const [
+    stationLoading,
+    setStationLoading,
+  ] = useState(
+    true
+  );
+
+  /* =======================================================
+     INTERRUPTION FORM
+  ======================================================= */
+
+  const [
+    feederId,
+    setFeederId,
+  ] = useState('');
+
+  const [
+    reason,
+    setReason,
+  ] = useState('');
+
+  const [
+    otherReason,
+    setOtherReason,
+  ] = useState('');
+
+  const [
+    tripTime,
+    setTripTime,
+  ] = useState(
     currentLocalDateTime()
   );
 
-  /* ---------------------------------------------------------
-     Open interruptions
-  --------------------------------------------------------- */
+  /* =======================================================
+     OPEN INTERRUPTIONS
+  ======================================================= */
 
-  const [openInterruptions, setOpenInterruptions] =
-    useState<Interruption[]>([]);
+  const [
+    openInterruptions,
+    setOpenInterruptions,
+  ] = useState<
+    Interruption[]
+  >([]);
 
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [restoring, setRestoring] = useState(false);
-
-  const [error, setError] = useState<string | null>(
-    null
+  const [
+    loading,
+    setLoading,
+  ] = useState(
+    true
   );
 
-  /* ---------------------------------------------------------
-     Confirmation modal
-  --------------------------------------------------------- */
+  const [
+    creating,
+    setCreating,
+  ] = useState(
+    false
+  );
+
+  const [
+    restoring,
+    setRestoring,
+  ] = useState(
+    false
+  );
+
+  const [
+    error,
+    setError,
+  ] = useState<
+    string | null
+  >(null);
+
+  /* =======================================================
+     TRIP CONFIRMATION
+  ======================================================= */
 
   const [
     showTripConfirmation,
     setShowTripConfirmation,
-  ] = useState(false);
+  ] = useState(
+    false
+  );
 
-  /*
-   * Prevent the confirmation window from immediately
-   * reopening when the operator presses Cancel without
-   * changing any values.
-   */
-  const [lastPromptKey, setLastPromptKey] =
-    useState("");
+  const [
+    lastPromptKey,
+    setLastPromptKey,
+  ] = useState('');
 
-  /* ---------------------------------------------------------
-     Restore modal
-  --------------------------------------------------------- */
+  /* =======================================================
+     RESTORE MODAL
+  ======================================================= */
 
   const [
     selectedInterruption,
     setSelectedInterruption,
-  ] = useState<Interruption | null>(null);
+  ] = useState<
+    Interruption | null
+  >(null);
 
-  const [restoreTime, setRestoreTime] = useState(
+  const [
+    restoreTime,
+    setRestoreTime,
+  ] = useState(
     currentLocalDateTime()
   );
 
-  /* =========================================================
-     FEEDER LOOKUP
-  ========================================================= */
+  /* =======================================================
+     LOAD OPERATOR + ASSIGNED STATION
+  ======================================================= */
 
-  const feederMap = useMemo(() => {
-    return new Map(
-      activeFeeders.map((f) => [f.id, f.name])
-    );
-  }, [activeFeeders]);
+  useEffect(() => {
+    let cancelled =
+      false;
 
-  const selectedFeeder = useMemo(
-    () =>
-      activeFeeders.find(
-        (f) => f.id === feederId
-      ) ?? null,
-    [activeFeeders, feederId]
-  );
+    async function loadOperatorStation() {
+      setStationLoading(
+        true
+      );
 
-  function interruptionFeederId(
-    interruption: Interruption
-  ): string | null {
-    return (
-      (
-        interruption as Interruption & {
-          feeder_id?: string | null;
-        }
-      ).feeder_id ?? null
-    );
-  }
-
-  function feederNameFor(
-    interruption: Interruption
-  ): string {
-    const id =
-      interruptionFeederId(interruption);
-
-    if (!id) return "Unknown Feeder";
-
-    return feederMap.get(id) ?? "Unknown Feeder";
-  }
-
-  /* =========================================================
-     LOAD CURRENT OPEN INTERRUPTIONS
-  ========================================================= */
-
-  const loadOpenInterruptions =
-    useCallback(async () => {
-      if (!activeStationId) {
-        setOpenInterruptions([]);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
+      setError(
+        null
+      );
 
       try {
-        const rows = await api.getInterruptions(
-          activeStationId,
-          "open"
+        const {
+          data: {
+            user,
+          },
+          error:
+            userError,
+        } =
+          await supabase.auth.getUser();
+
+        if (
+          userError
+        ) {
+          throw userError;
+        }
+
+        if (!user) {
+          throw new Error(
+            'No authenticated operator found.'
+          );
+        }
+
+        if (
+          cancelled
+        ) {
+          return;
+        }
+
+        setOperatorUserId(
+          user.id
         );
 
-        rows.sort(
-          (a, b) =>
-            +new Date(b.started_at) -
-            +new Date(a.started_at)
+        const {
+          data:
+            assignment,
+          error:
+            assignmentError,
+        } =
+          await supabase
+            .from(
+              'user_stations'
+            )
+            .select(
+              'station_id'
+            )
+            .eq(
+              'user_id',
+              user.id
+            )
+            .eq(
+              'active',
+              true
+            )
+            .limit(
+              1
+            )
+            .maybeSingle();
+
+        if (
+          assignmentError
+        ) {
+          throw assignmentError;
+        }
+
+        if (
+          !assignment?.station_id
+        ) {
+          if (
+            !cancelled
+          ) {
+            setOperatorStationId(
+              null
+            );
+
+            setOperatorStationName(
+              'No station assigned'
+            );
+
+            setStationFeeders(
+              []
+            );
+
+            setFeederId(
+              ''
+            );
+          }
+
+          return;
+        }
+
+        const stationId =
+          assignment.station_id;
+
+        if (
+          cancelled
+        ) {
+          return;
+        }
+
+        setOperatorStationId(
+          stationId
         );
 
-        setOpenInterruptions(rows);
-      } catch (e) {
-        setError(
-          e instanceof Error
-            ? e.message
-            : "Failed to load interruptions."
+        const stationFromContext =
+          stations.find(
+            (
+              station
+            ) =>
+              station.id ===
+              stationId
+          );
+
+        if (
+          stationFromContext
+        ) {
+          setOperatorStationName(
+            stationFromContext.name
+          );
+        } else {
+          const {
+            data:
+              stationRow,
+            error:
+              stationError,
+          } =
+            await supabase
+              .from(
+                'stations'
+              )
+              .select(
+                'id, name'
+              )
+              .eq(
+                'id',
+                stationId
+              )
+              .single();
+
+          if (
+            stationError
+          ) {
+            throw stationError;
+          }
+
+          if (
+            !cancelled
+          ) {
+            setOperatorStationName(
+              stationRow.name
+            );
+          }
+        }
+
+        const feeders =
+          await api.getFeeders(
+            stationId
+          );
+
+        if (
+          cancelled
+        ) {
+          return;
+        }
+
+        setStationFeeders(
+          feeders
         );
+
+        setFeederId(
+          ''
+        );
+      } catch (
+        e
+      ) {
+        console.error(
+          'Failed to load operator station:',
+          e
+        );
+
+        if (
+          !cancelled
+        ) {
+          setOperatorUserId(
+            null
+          );
+
+          setOperatorStationId(
+            null
+          );
+
+          setOperatorStationName(
+            'Station unavailable'
+          );
+
+          setStationFeeders(
+            []
+          );
+
+          setFeederId(
+            ''
+          );
+
+          setError(
+            e instanceof Error
+              ? e.message
+              : 'Failed to load operator station.'
+          );
+        }
       } finally {
-        setLoading(false);
+        if (
+          !cancelled
+        ) {
+          setStationLoading(
+            false
+          );
+        }
       }
-    }, [activeStationId]);
+    }
+
+    void loadOperatorStation();
+
+    return () => {
+      cancelled =
+        true;
+    };
+  }, [
+    stations,
+  ]);
+
+  /* =======================================================
+     FEEDER LOOKUP
+  ======================================================= */
+
+  const feederMap =
+    useMemo(
+      () =>
+        new Map(
+          stationFeeders.map(
+            (
+              feeder
+            ) => [
+              feeder.id,
+              feeder.name,
+            ]
+          )
+        ),
+      [
+        stationFeeders,
+      ]
+    );
+
+  const selectedFeeder =
+    useMemo(
+      () =>
+        stationFeeders.find(
+          (
+            feeder
+          ) =>
+            feeder.id ===
+            feederId
+        ) ??
+        null,
+      [
+        stationFeeders,
+        feederId,
+      ]
+    );
+
+  /* =======================================================
+     OPEN FEEDER IDS
+
+     Feeder cannot be tripped again until restored.
+  ======================================================= */
+
+  const openFeederIds =
+    useMemo(
+      () =>
+        new Set(
+          openInterruptions
+            .map(
+              (
+                interruption
+              ) =>
+                getInterruptionFeederId(
+                  interruption
+                )
+            )
+            .filter(
+              (
+                id
+              ): id is string =>
+                Boolean(
+                  id
+                )
+            )
+        ),
+      [
+        openInterruptions,
+      ]
+    );
+
+  function feederNameFor(
+    interruption:
+      Interruption
+  ): string {
+    const id =
+      getInterruptionFeederId(
+        interruption
+      );
+
+    if (!id) {
+      return 'Unknown Feeder';
+    }
+
+    return (
+      feederMap.get(
+        id
+      ) ??
+      'Unknown Feeder'
+    );
+  }
+
+  /* =======================================================
+     LOAD OPEN INTERRUPTIONS
+  ======================================================= */
+
+  const loadOpenInterruptions =
+    useCallback(
+      async () => {
+        if (
+          !operatorStationId
+        ) {
+          setOpenInterruptions(
+            []
+          );
+
+          setLoading(
+            false
+          );
+
+          return;
+        }
+
+        setLoading(
+          true
+        );
+
+        setError(
+          null
+        );
+
+        try {
+          const rows =
+            await api.getInterruptions(
+              operatorStationId,
+              'OPEN'
+            );
+
+          rows.sort(
+            (
+              a,
+              b
+            ) => {
+              const startA =
+                getInterruptionStart(
+                  a
+                );
+
+              const startB =
+                getInterruptionStart(
+                  b
+                );
+
+              return (
+                +new Date(
+                  startB ??
+                    0
+                ) -
+                +new Date(
+                  startA ??
+                    0
+                )
+              );
+            }
+          );
+
+          setOpenInterruptions(
+            rows
+          );
+        } catch (
+          e
+        ) {
+          console.error(
+            'Failed to load open interruptions:',
+            e
+          );
+
+          setError(
+            e instanceof Error
+              ? e.message
+              : 'Failed to load interruptions.'
+          );
+        } finally {
+          setLoading(
+            false
+          );
+        }
+      },
+      [
+        operatorStationId,
+      ]
+    );
 
   useEffect(() => {
     void loadOpenInterruptions();
-  }, [loadOpenInterruptions]);
-
-  /* =========================================================
-     AUTOMATIC CONFIRMATION POPUP
-
-     When feeder + reason are selected, trip time already
-     contains the current time, so the confirmation window
-     appears automatically.
-  ========================================================= */
-
-  useEffect(() => {
-    if (!feederId || !reason || !tripTime) return;
-
-    const promptKey = `${feederId}|${reason}|${tripTime}`;
-
-    if (promptKey === lastPromptKey) return;
-
-    setLastPromptKey(promptKey);
-    setShowTripConfirmation(true);
   }, [
-    feederId,
-    reason,
-    tripTime,
-    lastPromptKey,
+    loadOpenInterruptions,
   ]);
 
-  /* =========================================================
-     CREATE INTERRUPTION
-  ========================================================= */
+  /* =======================================================
+     AUTOMATIC CONFIRMATION POPUP
 
-  async function confirmTrip() {
+     For "Others", popup waits until remarks are filled.
+  ======================================================= */
+
+  useEffect(() => {
     if (
-      !activeStationId ||
       !feederId ||
       !reason ||
       !tripTime
@@ -258,75 +770,219 @@ export function InterruptionEntryPage({
       return;
     }
 
-    setCreating(true);
-    setError(null);
+    if (
+      reason === 'Others' &&
+      !otherReason.trim()
+    ) {
+      return;
+    }
+
+    const promptKey =
+      `${feederId}|` +
+      `${reason}|` +
+      `${otherReason.trim()}|` +
+      `${tripTime}`;
+
+    if (
+      promptKey ===
+      lastPromptKey
+    ) {
+      return;
+    }
+
+    setLastPromptKey(
+      promptKey
+    );
+
+    setShowTripConfirmation(
+      true
+    );
+  }, [
+    feederId,
+    reason,
+    otherReason,
+    tripTime,
+    lastPromptKey,
+  ]);
+
+  /* =======================================================
+     CREATE INTERRUPTION
+  ======================================================= */
+
+  async function confirmTrip() {
+    if (
+      !operatorStationId ||
+      !operatorUserId ||
+      !feederId ||
+      !reason ||
+      !tripTime
+    ) {
+      setShowTripConfirmation(
+        false
+      );
+
+      setError(
+        'Station, operator, feeder, trip time and reason are required.'
+      );
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       Feeder already OPEN
+    ------------------------------------------------------- */
+
+    if (
+      openFeederIds.has(
+        feederId
+      )
+    ) {
+      setShowTripConfirmation(
+        false
+      );
+
+      setError(
+        'This feeder is already tripped. Restore it before recording another interruption.'
+      );
+
+      return;
+    }
+
+    /* -------------------------------------------------------
+       "Others" reason validation
+    ------------------------------------------------------- */
+
+    if (
+      reason ===
+        'Others' &&
+      !otherReason.trim()
+    ) {
+      setShowTripConfirmation(
+        false
+      );
+
+      setError(
+        'Please specify the reason for interruption.'
+      );
+
+      return;
+    }
+
+    setCreating(
+      true
+    );
+
+    setError(
+      null
+    );
 
     try {
-      /*
-       * Cast against the argument type of the existing
-       * api.addInterruption method so this page remains
-       * compatible with the project's existing API service.
-       */
-      const row = {
-        station_id: activeStationId,
-        feeder_id: feederId,
-        started_at: localInputToISO(tripTime),
-        restored_at: null,
-        reason,
-        status: "open",
-      } as Parameters<
-        typeof api.addInterruption
-      >[0];
-
       const created =
-        await api.addInterruption(row);
+        await api.addInterruption(
+          {
+            station_id:
+              operatorStationId,
 
-      setOpenInterruptions((current) => [
-        created,
-        ...current,
-      ]);
+            feeder_id:
+              feederId,
 
-      setShowTripConfirmation(false);
+            operator_id:
+              operatorUserId,
 
-      /*
-       * Reset the entry form for the next interruption.
-       */
-      setFeederId("");
-      setReason("");
+            interruption_start:
+              localInputToISO(
+                tripTime
+              ),
 
-      const nextTime = currentLocalDateTime();
-      setTripTime(nextTime);
-      setLastPromptKey("");
-    } catch (e) {
+            interruption_end:
+              null,
+
+            cause:
+              reason,
+
+            remarks:
+              reason ===
+              'Others'
+                ? otherReason.trim()
+                : null,
+
+            current_status:
+              'OPEN',
+          }
+        );
+
+      setOpenInterruptions(
+        (
+          current
+        ) => [
+          created,
+          ...current,
+        ]
+      );
+
+      setShowTripConfirmation(
+        false
+      );
+
+      setFeederId(
+        ''
+      );
+
+      setReason(
+        ''
+      );
+
+      setOtherReason(
+        ''
+      );
+
+      setTripTime(
+        currentLocalDateTime()
+      );
+
+      setLastPromptKey(
+        ''
+      );
+    } catch (
+      e
+    ) {
+      console.error(
+        'Failed to create interruption:',
+        e
+      );
+
       setError(
         e instanceof Error
           ? e.message
-          : "Failed to create interruption."
+          : 'Failed to create interruption.'
       );
     } finally {
-      setCreating(false);
+      setCreating(
+        false
+      );
     }
   }
 
-  /* =========================================================
-     OPEN RESTORE WINDOW
-  ========================================================= */
+  /* =======================================================
+     OPEN RESTORE MODAL
+  ======================================================= */
 
   function openRestoreModal(
-    interruption: Interruption
+    interruption:
+      Interruption
   ) {
-    setSelectedInterruption(interruption);
+    setSelectedInterruption(
+      interruption
+    );
 
-    /*
-     * Restore time defaults to current date/time,
-     * but the operator may change it.
-     */
-    setRestoreTime(currentLocalDateTime());
+    setRestoreTime(
+      currentLocalDateTime()
+    );
   }
 
-  /* =========================================================
+  /* =======================================================
      RESTORE FEEDER
-  ========================================================= */
+  ======================================================= */
 
   async function restoreFeeder() {
     if (
@@ -336,119 +992,214 @@ export function InterruptionEntryPage({
       return;
     }
 
-    setRestoring(true);
-    setError(null);
+    const interruptionStart =
+      getInterruptionStart(
+        selectedInterruption
+      );
+
+    if (
+      interruptionStart &&
+      new Date(
+        restoreTime
+      ).getTime() <
+        new Date(
+          interruptionStart
+        ).getTime()
+    ) {
+      setError(
+        'Restore time cannot be earlier than interruption start time.'
+      );
+
+      return;
+    }
+
+    setRestoring(
+      true
+    );
+
+    setError(
+      null
+    );
 
     try {
       await api.restoreInterruption(
         selectedInterruption.id,
-        localInputToISO(restoreTime)
-      );
-
-      /*
-       * Remove restored feeder immediately from the
-       * Current Open Feeders list.
-       */
-      setOpenInterruptions((current) =>
-        current.filter(
-          (item) =>
-            item.id !== selectedInterruption.id
+        localInputToISO(
+          restoreTime
         )
       );
 
-      setSelectedInterruption(null);
-    } catch (e) {
+      setOpenInterruptions(
+        (
+          current
+        ) =>
+          current.filter(
+            (
+              item
+            ) =>
+              item.id !==
+              selectedInterruption.id
+          )
+      );
+
+      setSelectedInterruption(
+        null
+      );
+    } catch (
+      e
+    ) {
+      console.error(
+        'Failed to restore interruption:',
+        e
+      );
+
       setError(
         e instanceof Error
           ? e.message
-          : "Failed to restore feeder."
+          : 'Failed to restore feeder.'
       );
     } finally {
-      setRestoring(false);
+      setRestoring(
+        false
+      );
     }
   }
 
-  /* =========================================================
+  /* =======================================================
      UI
-  ========================================================= */
+  ======================================================= */
 
   return (
     <div
       style={{
-        minHeight: "100vh",
-        background: "#EEF3F8",
-        display: "flex",
-        flexDirection: "column",
+        minHeight:
+          '100vh',
+
+        background:
+          '#EEF3F8',
+
+        display:
+          'flex',
+
+        flexDirection:
+          'column',
       }}
     >
-      {/* =====================================================
+      {/* ===================================================
           HEADER
-      ====================================================== */}
+      ==================================================== */}
 
       <div
         style={{
           background:
-            "linear-gradient(135deg,#0D47A1,#1565C0)",
-          color: "white",
-          padding: 16,
-          paddingTop: 22,
-          paddingBottom: 22,
-          borderBottomLeftRadius: 22,
-          borderBottomRightRadius: 22,
+            'linear-gradient(135deg,#0D47A1,#1565C0)',
+
+          color:
+            'white',
+
+          padding:
+            16,
+
+          paddingTop:
+            22,
+
+          paddingBottom:
+            22,
+
+          borderBottomLeftRadius:
+            22,
+
+          borderBottomRightRadius:
+            22,
+
           boxShadow:
-            "0 4px 12px rgba(0,0,0,.18)",
+            '0 4px 12px rgba(0,0,0,.18)',
         }}
       >
-        {/* Top row */}
-
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
+            display:
+              'flex',
+
+            alignItems:
+              'center',
+
+            justifyContent:
+              'space-between',
           }}
         >
           <button
-            onClick={onBack}
+            onClick={
+              onBack
+            }
+
             className="rounded-full p-1 transition hover:bg-white/10 active:scale-95"
+
             aria-label="Back"
           >
-            <ArrowLeft size={24} />
+            <ArrowLeft
+              size={
+                24
+              }
+            />
           </button>
 
           <h2
             style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 700,
+              margin:
+                0,
+
+              fontSize:
+                22,
+
+              fontWeight:
+                700,
             }}
           >
             Interruption Entry
           </h2>
 
-          <CalendarDays size={24} />
+          <CalendarDays
+            size={
+              24
+            }
+          />
         </div>
-
-        {/* Station */}
 
         <div
           style={{
-            marginTop: 18,
+            marginTop:
+              18,
+
             background:
-              "rgba(255,255,255,.16)",
+              'rgba(255,255,255,.16)',
+
             border:
-              "1px solid rgba(255,255,255,.20)",
-            borderRadius: 14,
-            padding: "11px 14px",
+              '1px solid rgba(255,255,255,.20)',
+
+            borderRadius:
+              14,
+
+            padding:
+              '11px 14px',
           }}
         >
           <div
             style={{
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: ".08em",
-              color: "#BFDBFE",
-              fontWeight: 700,
+              fontSize:
+                10,
+
+              textTransform:
+                'uppercase',
+
+              letterSpacing:
+                '.08em',
+
+              color:
+                '#BFDBFE',
+
+              fontWeight:
+                700,
             }}
           >
             Operator Station
@@ -456,27 +1207,40 @@ export function InterruptionEntryPage({
 
           <div
             style={{
-              marginTop: 3,
-              fontSize: 15,
-              fontWeight: 700,
+              marginTop:
+                3,
+
+              fontSize:
+                15,
+
+              fontWeight:
+                700,
             }}
           >
-            {activeStation?.name ??
-              "Station not assigned"}
+            {stationLoading
+              ? 'Loading station...'
+              : operatorStationName}
           </div>
         </div>
       </div>
 
-      {/* =====================================================
+      {/* ===================================================
           BODY
-      ====================================================== */}
+      ==================================================== */}
 
       <div
         style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: 16,
-          paddingBottom: 100,
+          flex:
+            1,
+
+          overflowY:
+            'auto',
+
+          padding:
+            16,
+
+          paddingBottom:
+            100,
         }}
       >
         {/* =================================================
@@ -486,71 +1250,163 @@ export function InterruptionEntryPage({
         {error && (
           <div
             style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "flex-start",
-              marginBottom: 14,
-              borderRadius: 14,
-              padding: 14,
-              background: "#FEF2F2",
-              border: "1px solid #FECACA",
-              color: "#B91C1C",
+              display:
+                'flex',
+
+              gap:
+                10,
+
+              alignItems:
+                'flex-start',
+
+              marginBottom:
+                14,
+
+              borderRadius:
+                14,
+
+              padding:
+                14,
+
+              background:
+                '#FEF2F2',
+
+              border:
+                '1px solid #FECACA',
+
+              color:
+                '#B91C1C',
             }}
           >
             <AlertTriangle
-              size={20}
+              size={
+                20
+              }
+
               style={{
-                flexShrink: 0,
-                marginTop: 1,
+                flexShrink:
+                  0,
+
+                marginTop:
+                  1,
               }}
             />
 
             <div
               style={{
-                fontSize: 13,
-                lineHeight: 1.45,
+                flex:
+                  1,
+
+                fontSize:
+                  13,
+
+                lineHeight:
+                  1.45,
               }}
             >
               {error}
             </div>
+
+            <button
+              type="button"
+
+              onClick={() =>
+                setError(
+                  null
+                )
+              }
+
+              style={{
+                border:
+                  'none',
+
+                background:
+                  'transparent',
+
+                color:
+                  '#B91C1C',
+
+                cursor:
+                  'pointer',
+
+                padding:
+                  0,
+              }}
+            >
+              <X
+                size={
+                  18
+                }
+              />
+            </button>
           </div>
         )}
 
         {/* =================================================
-            NEW INTERRUPTION CARD
+            RECORD INTERRUPTION CARD
         ================================================== */}
 
         <div
           style={{
-            background: "#ffffff",
-            borderRadius: 18,
-            padding: 18,
+            background:
+              '#ffffff',
+
+            borderRadius:
+              18,
+
+            padding:
+              18,
+
             boxShadow:
-              "0 4px 12px rgba(0,0,0,.08)",
-            border: "1px solid #E2E8F0",
+              '0 4px 12px rgba(0,0,0,.08)',
+
+            border:
+              '1px solid #E2E8F0',
           }}
         >
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              marginBottom: 18,
+              display:
+                'flex',
+
+              alignItems:
+                'center',
+
+              gap:
+                12,
+
+              marginBottom:
+                18,
             }}
           >
             <div
               style={{
-                width: 44,
-                height: 44,
-                borderRadius: 13,
-                background: "#FEE2E2",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                width:
+                  44,
+
+                height:
+                  44,
+
+                borderRadius:
+                  13,
+
+                background:
+                  '#FEE2E2',
+
+                display:
+                  'flex',
+
+                alignItems:
+                  'center',
+
+                justifyContent:
+                  'center',
               }}
             >
               <ZapOff
-                size={22}
+                size={
+                  22
+                }
                 color="#DC2626"
               />
             </div>
@@ -558,10 +1414,17 @@ export function InterruptionEntryPage({
             <div>
               <h3
                 style={{
-                  margin: 0,
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: "#1E293B",
+                  margin:
+                    0,
+
+                  fontSize:
+                    16,
+
+                  fontWeight:
+                    700,
+
+                  color:
+                    '#1E293B',
                 }}
               >
                 Record Interruption
@@ -569,9 +1432,14 @@ export function InterruptionEntryPage({
 
               <p
                 style={{
-                  margin: "3px 0 0",
-                  fontSize: 11,
-                  color: "#64748B",
+                  margin:
+                    '3px 0 0',
+
+                  fontSize:
+                    11,
+
+                  color:
+                    '#64748B',
                 }}
               >
                 Enter feeder trip details
@@ -579,96 +1447,209 @@ export function InterruptionEntryPage({
             </div>
           </div>
 
-          {/* Feeder */}
+          {/* =================================================
+              FEEDER
+          ================================================== */}
 
           <label
             style={{
-              display: "block",
-              marginBottom: 15,
+              display:
+                'block',
+
+              marginBottom:
+                15,
             }}
           >
             <span
               style={{
-                display: "block",
-                marginBottom: 6,
-                fontSize: 11,
-                fontWeight: 700,
-                color: "#475569",
-                textTransform: "uppercase",
+                display:
+                  'block',
+
+                marginBottom:
+                  6,
+
+                fontSize:
+                  11,
+
+                fontWeight:
+                  700,
+
+                color:
+                  '#475569',
+
+                textTransform:
+                  'uppercase',
               }}
             >
-              Feeder / Equipment
+              Feeder
             </span>
 
             <div
               style={{
-                position: "relative",
+                position:
+                  'relative',
               }}
             >
               <select
-                value={feederId}
-                onChange={(e) =>
-                  setFeederId(e.target.value)
+                value={
+                  feederId
                 }
-                disabled={!activeStationId}
+
+                onChange={(
+                  e
+                ) =>
+                  setFeederId(
+                    e.target.value
+                  )
+                }
+
+                disabled={
+                  stationLoading ||
+                  !operatorStationId
+                }
+
                 style={{
-                  width: "100%",
-                  appearance: "none",
-                  border: "1px solid #CBD5E1",
-                  borderRadius: 12,
-                  padding: "12px 42px 12px 13px",
-                  background: "#F8FAFC",
-                  color: "#1E293B",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  outline: "none",
+                  width:
+                    '100%',
+
+                  appearance:
+                    'none',
+
+                  border:
+                    '1px solid #CBD5E1',
+
+                  borderRadius:
+                    12,
+
+                  padding:
+                    '12px 42px 12px 13px',
+
+                  background:
+                    '#F8FAFC',
+
+                  color:
+                    '#1E293B',
+
+                  fontSize:
+                    14,
+
+                  fontWeight:
+                    600,
+
+                  outline:
+                    'none',
+
+                  opacity:
+                    stationLoading ||
+                    !operatorStationId
+                      ? 0.6
+                      : 1,
                 }}
               >
                 <option value="">
-                  Select feeder
+                  {stationLoading
+                    ? 'Loading feeders...'
+                    : stationFeeders.length ===
+                      0
+                    ? 'No feeders available'
+                    : 'Select feeder'}
                 </option>
 
-                {activeFeeders.map((f) => (
-                  <option
-                    key={f.id}
-                    value={f.id}
-                  >
-                    {f.name}
-                  </option>
-                ))}
+                {stationFeeders.map(
+                  (
+                    feeder
+                  ) => {
+                    const isOpen =
+                      openFeederIds.has(
+                        feeder.id
+                      );
+
+                    return (
+                      <option
+                        key={
+                          feeder.id
+                        }
+
+                        value={
+                          feeder.id
+                        }
+
+                        disabled={
+                          isOpen
+                        }
+                      >
+                        {
+                          feeder.name
+                        }
+
+                        {isOpen
+                          ? ' — Already Tripped'
+                          : ''}
+                      </option>
+                    );
+                  }
+                )}
               </select>
 
               <ChevronDown
-                size={18}
+                size={
+                  18
+                }
+
                 color="#64748B"
+
                 style={{
-                  pointerEvents: "none",
-                  position: "absolute",
-                  right: 13,
-                  top: "50%",
+                  pointerEvents:
+                    'none',
+
+                  position:
+                    'absolute',
+
+                  right:
+                    13,
+
+                  top:
+                    '50%',
+
                   transform:
-                    "translateY(-50%)",
+                    'translateY(-50%)',
                 }}
               />
             </div>
           </label>
 
-          {/* Trip Time */}
+          {/* =================================================
+              TRIP DATE & TIME
+          ================================================== */}
 
           <label
             style={{
-              display: "block",
-              marginBottom: 15,
+              display:
+                'block',
+
+              marginBottom:
+                15,
             }}
           >
             <span
               style={{
-                display: "block",
-                marginBottom: 6,
-                fontSize: 11,
-                fontWeight: 700,
-                color: "#475569",
-                textTransform: "uppercase",
+                display:
+                  'block',
+
+                marginBottom:
+                  6,
+
+                fontSize:
+                  11,
+
+                fontWeight:
+                  700,
+
+                color:
+                  '#475569',
+
+                textTransform:
+                  'uppercase',
               }}
             >
               Trip Date & Time
@@ -676,60 +1657,120 @@ export function InterruptionEntryPage({
 
             <div
               style={{
-                position: "relative",
+                position:
+                  'relative',
               }}
             >
               <Clock3
-                size={18}
+                size={
+                  18
+                }
+
                 color="#64748B"
+
                 style={{
-                  position: "absolute",
-                  left: 13,
-                  top: "50%",
+                  position:
+                    'absolute',
+
+                  left:
+                    13,
+
+                  top:
+                    '50%',
+
                   transform:
-                    "translateY(-50%)",
-                  pointerEvents: "none",
+                    'translateY(-50%)',
+
+                  pointerEvents:
+                    'none',
+
+                  zIndex:
+                    1,
                 }}
               />
 
               <input
                 type="datetime-local"
-                value={tripTime}
-                onChange={(e) =>
-                  setTripTime(e.target.value)
+
+                value={
+                  tripTime
                 }
+
+                onChange={(
+                  e
+                ) =>
+                  setTripTime(
+                    e.target.value
+                  )
+                }
+
                 style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  border: "1px solid #CBD5E1",
-                  borderRadius: 12,
+                  width:
+                    '100%',
+
+                  boxSizing:
+                    'border-box',
+
+                  border:
+                    '1px solid #CBD5E1',
+
+                  borderRadius:
+                    12,
+
                   padding:
-                    "12px 12px 12px 42px",
-                  background: "#F8FAFC",
-                  color: "#1E293B",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  outline: "none",
+                    '12px 12px 12px 42px',
+
+                  background:
+                    '#F8FAFC',
+
+                  color:
+                    '#1E293B',
+
+                  fontSize:
+                    14,
+
+                  fontWeight:
+                    600,
+
+                  outline:
+                    'none',
+
+                  minHeight:
+                    46,
                 }}
               />
             </div>
           </label>
 
-          {/* Reason */}
+          {/* =================================================
+              REASON
+          ================================================== */}
 
           <label
             style={{
-              display: "block",
+              display:
+                'block',
             }}
           >
             <span
               style={{
-                display: "block",
-                marginBottom: 6,
-                fontSize: 11,
-                fontWeight: 700,
-                color: "#475569",
-                textTransform: "uppercase",
+                display:
+                  'block',
+
+                marginBottom:
+                  6,
+
+                fontSize:
+                  11,
+
+                fontWeight:
+                  700,
+
+                color:
+                  '#475569',
+
+                textTransform:
+                  'uppercase',
               }}
             >
               Reason of Interruption
@@ -737,27 +1778,67 @@ export function InterruptionEntryPage({
 
             <div
               style={{
-                position: "relative",
+                position:
+                  'relative',
               }}
             >
               <select
-                value={reason}
-                onChange={(e) =>
-                  setReason(e.target.value)
+                value={
+                  reason
                 }
+
+                onChange={(
+                  e
+                ) => {
+                  const value =
+                    e.target.value;
+
+                  setReason(
+                    value
+                  );
+
+                  if (
+                    value !==
+                    'Others'
+                  ) {
+                    setOtherReason(
+                      ''
+                    );
+                  }
+                }}
+
                 style={{
-                  width: "100%",
-                  appearance: "none",
-                  border: "1px solid #CBD5E1",
-                  borderRadius: 12,
-                  padding: "12px 42px 12px 13px",
-                  background: "#F8FAFC",
-                  color: reason
-                    ? "#1E293B"
-                    : "#64748B",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  outline: "none",
+                  width:
+                    '100%',
+
+                  appearance:
+                    'none',
+
+                  border:
+                    '1px solid #CBD5E1',
+
+                  borderRadius:
+                    12,
+
+                  padding:
+                    '12px 42px 12px 13px',
+
+                  background:
+                    '#F8FAFC',
+
+                  color:
+                    reason
+                      ? '#1E293B'
+                      : '#64748B',
+
+                  fontSize:
+                    14,
+
+                  fontWeight:
+                    600,
+
+                  outline:
+                    'none',
                 }}
               >
                 <option value="">
@@ -765,31 +1846,152 @@ export function InterruptionEntryPage({
                 </option>
 
                 {INTERRUPTION_REASONS.map(
-                  (item) => (
+                  (
+                    item
+                  ) => (
                     <option
-                      key={item}
-                      value={item}
+                      key={
+                        item
+                      }
+                      value={
+                        item
+                      }
                     >
-                      {item}
+                      {
+                        item
+                      }
                     </option>
                   )
                 )}
               </select>
 
               <ChevronDown
-                size={18}
+                size={
+                  18
+                }
+
                 color="#64748B"
+
                 style={{
-                  pointerEvents: "none",
-                  position: "absolute",
-                  right: 13,
-                  top: "50%",
+                  pointerEvents:
+                    'none',
+
+                  position:
+                    'absolute',
+
+                  right:
+                    13,
+
+                  top:
+                    '50%',
+
                   transform:
-                    "translateY(-50%)",
+                    'translateY(-50%)',
                 }}
               />
             </div>
           </label>
+
+          {/* =================================================
+              OTHER REASON / REMARKS
+          ================================================== */}
+
+          {reason ===
+            'Others' && (
+            <label
+              style={{
+                display:
+                  'block',
+
+                marginTop:
+                  12,
+              }}
+            >
+              <span
+                style={{
+                  display:
+                    'block',
+
+                  marginBottom:
+                    6,
+
+                  fontSize:
+                    11,
+
+                  fontWeight:
+                    700,
+
+                  color:
+                    '#475569',
+
+                  textTransform:
+                    'uppercase',
+                }}
+              >
+                Specify Other Reason
+              </span>
+
+              <textarea
+                value={
+                  otherReason
+                }
+
+                onChange={(
+                  e
+                ) =>
+                  setOtherReason(
+                    e.target.value
+                  )
+                }
+
+                placeholder="Enter interruption reason"
+
+                rows={
+                  3
+                }
+
+                required
+
+                style={{
+                  width:
+                    '100%',
+
+                  boxSizing:
+                    'border-box',
+
+                  border:
+                    '1px solid #CBD5E1',
+
+                  borderRadius:
+                    12,
+
+                  padding:
+                    '12px 13px',
+
+                  background:
+                    '#F8FAFC',
+
+                  color:
+                    '#1E293B',
+
+                  fontSize:
+                    14,
+
+                  fontWeight:
+                    500,
+
+                  lineHeight:
+                    1.45,
+
+                  outline:
+                    'none',
+
+                  resize:
+                    'vertical',
+                }}
+              />
+            </label>
+          )}
         </div>
 
         {/* =================================================
@@ -798,24 +2000,39 @@ export function InterruptionEntryPage({
 
         <div
           style={{
-            marginTop: 18,
+            marginTop:
+              18,
           }}
         >
           <div
             style={{
-              marginBottom: 10,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              marginBottom:
+                10,
+
+              display:
+                'flex',
+
+              alignItems:
+                'center',
+
+              justifyContent:
+                'space-between',
             }}
           >
             <div>
               <h3
                 style={{
-                  margin: 0,
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: "#1E293B",
+                  margin:
+                    0,
+
+                  fontSize:
+                    16,
+
+                  fontWeight:
+                    700,
+
+                  color:
+                    '#1E293B',
                 }}
               >
                 Currently Open Feeders
@@ -823,9 +2040,14 @@ export function InterruptionEntryPage({
 
               <p
                 style={{
-                  margin: "3px 0 0",
-                  fontSize: 11,
-                  color: "#64748B",
+                  margin:
+                    '3px 0 0',
+
+                  fontSize:
+                    11,
+
+                  color:
+                    '#64748B',
                 }}
               >
                 Tap a feeder to restore supply
@@ -834,81 +2056,147 @@ export function InterruptionEntryPage({
 
             <div
               style={{
-                minWidth: 30,
-                height: 30,
-                padding: "0 9px",
-                borderRadius: 15,
-                background: "#FEE2E2",
-                color: "#B91C1C",
-                fontSize: 12,
-                fontWeight: 800,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                minWidth:
+                  30,
+
+                height:
+                  30,
+
+                padding:
+                  '0 9px',
+
+                borderRadius:
+                  15,
+
+                background:
+                  '#FEE2E2',
+
+                color:
+                  '#B91C1C',
+
+                fontSize:
+                  12,
+
+                fontWeight:
+                  800,
+
+                display:
+                  'flex',
+
+                alignItems:
+                  'center',
+
+                justifyContent:
+                  'center',
               }}
             >
-              {openInterruptions.length}
+              {
+                openInterruptions.length
+              }
             </div>
           </div>
-
-          {/* Loading */}
 
           {loading && (
             <div
               style={{
-                background: "#ffffff",
-                borderRadius: 18,
-                padding: 28,
-                textAlign: "center",
-                color: "#64748B",
+                background:
+                  '#ffffff',
+
+                borderRadius:
+                  18,
+
+                padding:
+                  28,
+
+                textAlign:
+                  'center',
+
+                color:
+                  '#64748B',
+
                 boxShadow:
-                  "0 4px 12px rgba(0,0,0,.08)",
-                fontSize: 14,
-                fontWeight: 600,
+                  '0 4px 12px rgba(0,0,0,.08)',
+
+                fontSize:
+                  14,
+
+                fontWeight:
+                  600,
               }}
             >
               Loading open feeders…
             </div>
           )}
 
-          {/* Empty */}
-
           {!loading &&
-            openInterruptions.length === 0 && (
+            openInterruptions.length ===
+              0 && (
               <div
                 style={{
-                  background: "#ffffff",
-                  borderRadius: 18,
-                  padding: 28,
-                  textAlign: "center",
+                  background:
+                    '#ffffff',
+
+                  borderRadius:
+                    18,
+
+                  padding:
+                    28,
+
+                  textAlign:
+                    'center',
+
                   boxShadow:
-                    "0 4px 12px rgba(0,0,0,.08)",
-                  border: "1px solid #D1FAE5",
+                    '0 4px 12px rgba(0,0,0,.08)',
+
+                  border:
+                    '1px solid #D1FAE5',
                 }}
               >
                 <div
                   style={{
-                    width: 52,
-                    height: 52,
-                    margin: "0 auto 12px",
-                    borderRadius: "50%",
-                    background: "#D1FAE5",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
+                    width:
+                      52,
+
+                    height:
+                      52,
+
+                    margin:
+                      '0 auto 12px',
+
+                    borderRadius:
+                      '50%',
+
+                    background:
+                      '#D1FAE5',
+
+                    display:
+                      'flex',
+
+                    alignItems:
+                      'center',
+
+                    justifyContent:
+                      'center',
                   }}
                 >
                   <CheckCircle2
-                    size={27}
+                    size={
+                      27
+                    }
                     color="#059669"
                   />
                 </div>
 
                 <h4
                   style={{
-                    margin: 0,
-                    color: "#1E293B",
-                    fontSize: 15,
+                    margin:
+                      0,
+
+                    color:
+                      '#1E293B',
+
+                    fontSize:
+                      15,
                   }}
                 >
                   All Feeders Normal
@@ -916,100 +2204,160 @@ export function InterruptionEntryPage({
 
                 <p
                   style={{
-                    margin: "5px 0 0",
-                    color: "#64748B",
-                    fontSize: 12,
+                    margin:
+                      '5px 0 0',
+
+                    color:
+                      '#64748B',
+
+                    fontSize:
+                      12,
                   }}
                 >
-                  There are no open interruptions
-                  at this station.
+                  There are no open interruptions at this station.
                 </p>
               </div>
             )}
 
-          {/* Open feeder cards */}
-
           {!loading &&
-            openInterruptions.length > 0 && (
+            openInterruptions.length >
+              0 && (
               <div
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
+                  display:
+                    'flex',
+
+                  flexDirection:
+                    'column',
+
+                  gap:
+                    12,
                 }}
               >
                 {openInterruptions.map(
-                  (interruption) => (
+                  (
+                    interruption
+                  ) => (
                     <button
-                      key={interruption.id}
+                      key={
+                        interruption.id
+                      }
+
+                      type="button"
+
                       onClick={() =>
                         openRestoreModal(
                           interruption
                         )
                       }
+
                       style={{
-                        width: "100%",
-                        textAlign: "left",
+                        width:
+                          '100%',
+
+                        textAlign:
+                          'left',
+
                         border:
-                          "1px solid #FECACA",
-                        borderRadius: 18,
-                        padding: 15,
-                        background: "#ffffff",
+                          '1px solid #FECACA',
+
+                        borderRadius:
+                          18,
+
+                        padding:
+                          15,
+
+                        background:
+                          '#ffffff',
+
                         boxShadow:
-                          "0 4px 12px rgba(0,0,0,.08)",
-                        cursor: "pointer",
+                          '0 4px 12px rgba(0,0,0,.08)',
+
+                        cursor:
+                          'pointer',
                       }}
                     >
                       <div
                         style={{
-                          display: "flex",
+                          display:
+                            'flex',
+
                           alignItems:
-                            "flex-start",
-                          gap: 13,
+                            'flex-start',
+
+                          gap:
+                            13,
                         }}
                       >
                         <div
                           style={{
-                            width: 44,
-                            height: 44,
-                            flexShrink: 0,
-                            borderRadius: 13,
+                            width:
+                              44,
+
+                            height:
+                              44,
+
+                            flexShrink:
+                              0,
+
+                            borderRadius:
+                              13,
+
                             background:
-                              "#FEE2E2",
-                            display: "flex",
+                              '#FEE2E2',
+
+                            display:
+                              'flex',
+
                             alignItems:
-                              "center",
+                              'center',
+
                             justifyContent:
-                              "center",
+                              'center',
                           }}
                         >
                           <ZapOff
-                            size={22}
+                            size={
+                              22
+                            }
                             color="#DC2626"
                           />
                         </div>
 
                         <div
                           style={{
-                            flex: 1,
-                            minWidth: 0,
+                            flex:
+                              1,
+
+                            minWidth:
+                              0,
                           }}
                         >
                           <div
                             style={{
-                              display: "flex",
+                              display:
+                                'flex',
+
                               justifyContent:
-                                "space-between",
-                              gap: 10,
+                                'space-between',
+
+                              gap:
+                                10,
                             }}
                           >
                             <h4
                               style={{
-                                margin: 0,
+                                margin:
+                                  0,
+
                                 color:
-                                  "#1E293B",
-                                fontSize: 15,
-                                fontWeight: 700,
+                                  '#1E293B',
+
+                                fontSize:
+                                  15,
+
+                                fontWeight:
+                                  700,
                               }}
                             >
                               {feederNameFor(
@@ -1019,17 +2367,26 @@ export function InterruptionEntryPage({
 
                             <span
                               style={{
-                                flexShrink: 0,
+                                flexShrink:
+                                  0,
+
                                 borderRadius:
                                   20,
+
                                 padding:
-                                  "4px 9px",
+                                  '4px 9px',
+
                                 background:
-                                  "#FEE2E2",
+                                  '#FEE2E2',
+
                                 color:
-                                  "#B91C1C",
-                                fontSize: 9,
-                                fontWeight: 800,
+                                  '#B91C1C',
+
+                                fontSize:
+                                  9,
+
+                                fontWeight:
+                                  800,
                               }}
                             >
                               OPEN
@@ -1039,28 +2396,73 @@ export function InterruptionEntryPage({
                           <p
                             style={{
                               margin:
-                                "6px 0 0",
-                              fontSize: 12,
+                                '6px 0 0',
+
+                              fontSize:
+                                12,
+
                               color:
-                                "#64748B",
+                                '#64748B',
                             }}
                           >
-                            {interruption.reason}
+                            {
+                              getInterruptionCause(
+                                interruption
+                              )
+                            }
                           </p>
+
+                          {getInterruptionRemarks(
+                            interruption
+                          ) && (
+                            <p
+                              style={{
+                                margin:
+                                  '4px 0 0',
+
+                                fontSize:
+                                  11,
+
+                                lineHeight:
+                                  1.4,
+
+                                color:
+                                  '#94A3B8',
+                              }}
+                            >
+                              {
+                                getInterruptionRemarks(
+                                  interruption
+                                )
+                              }
+                            </p>
+                          )}
 
                           <div
                             style={{
-                              marginTop: 10,
-                              paddingTop: 9,
+                              marginTop:
+                                10,
+
+                              paddingTop:
+                                9,
+
                               borderTop:
-                                "1px solid #E2E8F0",
-                              fontSize: 10,
+                                '1px solid #E2E8F0',
+
+                              fontSize:
+                                10,
+
                               color:
-                                "#94A3B8",
-                              display: "flex",
+                                '#94A3B8',
+
+                              display:
+                                'flex',
+
                               justifyContent:
-                                "space-between",
-                              gap: 10,
+                                'space-between',
+
+                              gap:
+                                10,
                             }}
                           >
                             <span>
@@ -1071,12 +2473,15 @@ export function InterruptionEntryPage({
                               style={{
                                 fontWeight:
                                   600,
+
                                 color:
-                                  "#64748B",
+                                  '#64748B',
                               }}
                             >
                               {formatDateTime(
-                                interruption.started_at
+                                getInterruptionStart(
+                                  interruption
+                                )
                               )}
                             </span>
                           </div>
@@ -1090,67 +2495,115 @@ export function InterruptionEntryPage({
         </div>
       </div>
 
-      {/* =====================================================
-          TRIP CONFIRMATION MODAL
-      ====================================================== */}
+      {/* ===================================================
+          CONFIRM TRIP MODAL
+      ==================================================== */}
 
       {showTripConfirmation &&
         selectedFeeder && (
           <div
             style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 1000,
+              position:
+                'fixed',
+
+              inset:
+                0,
+
+              zIndex:
+                1000,
+
               background:
-                "rgba(15,23,42,.55)",
-              backdropFilter: "blur(3px)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 18,
+                'rgba(15,23,42,.55)',
+
+              backdropFilter:
+                'blur(3px)',
+
+              display:
+                'flex',
+
+              alignItems:
+                'center',
+
+              justifyContent:
+                'center',
+
+              padding:
+                18,
             }}
           >
             <div
               style={{
-                width: "100%",
-                maxWidth: 420,
-                background: "#ffffff",
-                borderRadius: 22,
-                overflow: "hidden",
+                width:
+                  '100%',
+
+                maxWidth:
+                  420,
+
+                background:
+                  '#ffffff',
+
+                borderRadius:
+                  22,
+
+                overflow:
+                  'hidden',
+
                 boxShadow:
-                  "0 24px 60px rgba(0,0,0,.25)",
+                  '0 24px 60px rgba(0,0,0,.25)',
               }}
             >
               <div
                 style={{
-                  padding: 18,
+                  padding:
+                    18,
+
                   background:
-                    "linear-gradient(135deg,#B91C1C,#DC2626)",
-                  color: "white",
+                    'linear-gradient(135deg,#B91C1C,#DC2626)',
+
+                  color:
+                    '#ffffff',
                 }}
               >
                 <div
                   style={{
-                    display: "flex",
+                    display:
+                      'flex',
+
                     justifyContent:
-                      "space-between",
-                    alignItems: "center",
+                      'space-between',
+
+                    alignItems:
+                      'center',
                   }}
                 >
                   <div
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
+                      display:
+                        'flex',
+
+                      alignItems:
+                        'center',
+
+                      gap:
+                        10,
                     }}
                   >
-                    <AlertTriangle size={22} />
+                    <AlertTriangle
+                      size={
+                        22
+                      }
+                    />
 
                     <h3
                       style={{
-                        margin: 0,
-                        fontSize: 18,
-                        fontWeight: 700,
+                        margin:
+                          0,
+
+                        fontSize:
+                          18,
+
+                        fontWeight:
+                          700,
                       }}
                     >
                       Confirm Interruption
@@ -1158,109 +2611,196 @@ export function InterruptionEntryPage({
                   </div>
 
                   <button
+                    type="button"
+
                     onClick={() =>
                       setShowTripConfirmation(
                         false
                       )
                     }
+
                     style={{
-                      border: "none",
+                      border:
+                        'none',
+
                       background:
-                        "transparent",
-                      color: "white",
-                      cursor: "pointer",
+                        'transparent',
+
+                      color:
+                        '#ffffff',
+
+                      cursor:
+                        'pointer',
                     }}
                   >
-                    <X size={22} />
+                    <X
+                      size={
+                        22
+                      }
+                    />
                   </button>
                 </div>
               </div>
 
               <div
                 style={{
-                  padding: 20,
+                  padding:
+                    20,
                 }}
               >
                 <p
                   style={{
-                    margin: "0 0 17px",
-                    fontSize: 13,
-                    color: "#64748B",
+                    margin:
+                      '0 0 17px',
+
+                    fontSize:
+                      13,
+
+                    color:
+                      '#64748B',
                   }}
                 >
-                  Please confirm the following
-                  feeder interruption.
+                  Please confirm the following feeder interruption.
                 </p>
 
                 <ModalRow
+                  label="Station"
+                  value={
+                    operatorStationName
+                  }
+                />
+
+                <ModalRow
                   label="Feeder"
-                  value={selectedFeeder.name}
+                  value={
+                    selectedFeeder.name
+                  }
                 />
 
                 <ModalRow
                   label="Trip Time"
                   value={formatDateTime(
-                    localInputToISO(tripTime)
+                    localInputToISO(
+                      tripTime
+                    )
                   )}
                 />
 
                 <ModalRow
                   label="Reason"
-                  value={reason}
+                  value={
+                    reason
+                  }
                 />
+
+                {reason ===
+                  'Others' && (
+                  <ModalRow
+                    label="Details"
+                    value={
+                      otherReason.trim()
+                    }
+                  />
+                )}
 
                 <div
                   style={{
-                    display: "flex",
-                    gap: 10,
-                    marginTop: 20,
+                    display:
+                      'flex',
+
+                    gap:
+                      10,
+
+                    marginTop:
+                      20,
                   }}
                 >
                   <button
-                    disabled={creating}
+                    type="button"
+
+                    disabled={
+                      creating
+                    }
+
                     onClick={() =>
                       setShowTripConfirmation(
                         false
                       )
                     }
+
                     style={{
-                      flex: 1,
+                      flex:
+                        1,
+
                       border:
-                        "1px solid #CBD5E1",
-                      borderRadius: 11,
-                      padding: "12px 10px",
-                      background: "#ffffff",
-                      color: "#475569",
-                      fontWeight: 700,
-                      cursor: "pointer",
+                        '1px solid #CBD5E1',
+
+                      borderRadius:
+                        11,
+
+                      padding:
+                        '12px 10px',
+
+                      background:
+                        '#ffffff',
+
+                      color:
+                        '#475569',
+
+                      fontWeight:
+                        700,
+
+                      cursor:
+                        'pointer',
                     }}
                   >
                     Cancel
                   </button>
 
                   <button
-                    disabled={creating}
+                    type="button"
+
+                    disabled={
+                      creating
+                    }
+
                     onClick={() =>
                       void confirmTrip()
                     }
+
                     style={{
-                      flex: 1.5,
-                      border: "none",
-                      borderRadius: 11,
-                      padding: "12px 10px",
-                      background: creating
-                        ? "#94A3B8"
-                        : "#DC2626",
-                      color: "#ffffff",
-                      fontWeight: 700,
-                      cursor: creating
-                        ? "default"
-                        : "pointer",
+                      flex:
+                        1.5,
+
+                      border:
+                        'none',
+
+                      borderRadius:
+                        11,
+
+                      padding:
+                        '12px 10px',
+
+                      background:
+                        creating
+                          ? '#94A3B8'
+                          : '#DC2626',
+
+                      color:
+                        '#ffffff',
+
+                      fontWeight:
+                        700,
+
+                      cursor:
+                        creating
+                          ? 'default'
+                          : 'pointer',
                     }}
                   >
                     {creating
-                      ? "Saving..."
-                      : "Confirm Trip"}
+                      ? 'Saving...'
+                      : 'Confirm Trip'}
                   </button>
                 </div>
               </div>
@@ -1268,67 +2808,114 @@ export function InterruptionEntryPage({
           </div>
         )}
 
-      {/* =====================================================
+      {/* ===================================================
           RESTORE MODAL
-      ====================================================== */}
+      ==================================================== */}
 
       {selectedInterruption && (
         <div
           style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1000,
-            background: "rgba(15,23,42,.55)",
-            backdropFilter: "blur(3px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 18,
+            position:
+              'fixed',
+
+            inset:
+              0,
+
+            zIndex:
+              1000,
+
+            background:
+              'rgba(15,23,42,.55)',
+
+            backdropFilter:
+              'blur(3px)',
+
+            display:
+              'flex',
+
+            alignItems:
+              'center',
+
+            justifyContent:
+              'center',
+
+            padding:
+              18,
           }}
         >
           <div
             style={{
-              width: "100%",
-              maxWidth: 420,
-              background: "#ffffff",
-              borderRadius: 22,
-              overflow: "hidden",
+              width:
+                '100%',
+
+              maxWidth:
+                420,
+
+              background:
+                '#ffffff',
+
+              borderRadius:
+                22,
+
+              overflow:
+                'hidden',
+
               boxShadow:
-                "0 24px 60px rgba(0,0,0,.25)",
+                '0 24px 60px rgba(0,0,0,.25)',
             }}
           >
-            {/* Modal header */}
-
             <div
               style={{
-                padding: 18,
+                padding:
+                  18,
+
                 background:
-                  "linear-gradient(135deg,#047857,#059669)",
-                color: "#ffffff",
+                  'linear-gradient(135deg,#047857,#059669)',
+
+                color:
+                  '#ffffff',
               }}
             >
               <div
                 style={{
-                  display: "flex",
+                  display:
+                    'flex',
+
                   justifyContent:
-                    "space-between",
-                  alignItems: "center",
+                    'space-between',
+
+                  alignItems:
+                    'center',
                 }}
               >
                 <div
                   style={{
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "center",
+                    display:
+                      'flex',
+
+                    gap:
+                      10,
+
+                    alignItems:
+                      'center',
                   }}
                 >
-                  <RotateCcw size={22} />
+                  <RotateCcw
+                    size={
+                      22
+                    }
+                  />
 
                   <h3
                     style={{
-                      margin: 0,
-                      fontSize: 18,
-                      fontWeight: 700,
+                      margin:
+                        0,
+
+                      fontSize:
+                        18,
+
+                      fontWeight:
+                        700,
                     }}
                   >
                     Restore Feeder
@@ -1336,28 +2923,50 @@ export function InterruptionEntryPage({
                 </div>
 
                 <button
+                  type="button"
+
                   onClick={() =>
                     setSelectedInterruption(
                       null
                     )
                   }
+
                   style={{
-                    border: "none",
-                    background: "transparent",
-                    color: "#ffffff",
-                    cursor: "pointer",
+                    border:
+                      'none',
+
+                    background:
+                      'transparent',
+
+                    color:
+                      '#ffffff',
+
+                    cursor:
+                      'pointer',
                   }}
                 >
-                  <X size={22} />
+                  <X
+                    size={
+                      22
+                    }
+                  />
                 </button>
               </div>
             </div>
 
             <div
               style={{
-                padding: 20,
+                padding:
+                  20,
               }}
             >
+              <ModalRow
+                label="Station"
+                value={
+                  operatorStationName
+                }
+              />
+
               <ModalRow
                 label="Feeder"
                 value={feederNameFor(
@@ -1368,32 +2977,60 @@ export function InterruptionEntryPage({
               <ModalRow
                 label="Interruption Start"
                 value={formatDateTime(
-                  selectedInterruption.started_at
+                  getInterruptionStart(
+                    selectedInterruption
+                  )
                 )}
               />
 
               <ModalRow
                 label="Reason"
                 value={
-                  selectedInterruption.reason
+                  getInterruptionCause(
+                    selectedInterruption
+                  )
                 }
               />
 
-              {/* Restore Time */}
+              {getInterruptionRemarks(
+                selectedInterruption
+              ) && (
+                <ModalRow
+                  label="Details"
+                  value={
+                    getInterruptionRemarks(
+                      selectedInterruption
+                    ) ??
+                    ''
+                  }
+                />
+              )}
 
               <div
                 style={{
-                  marginTop: 18,
+                  marginTop:
+                    18,
                 }}
               >
                 <label
                   style={{
-                    display: "block",
-                    marginBottom: 7,
-                    color: "#475569",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    textTransform: "uppercase",
+                    display:
+                      'block',
+
+                    marginBottom:
+                      7,
+
+                    color:
+                      '#475569',
+
+                    fontSize:
+                      11,
+
+                    fontWeight:
+                      700,
+
+                    textTransform:
+                      'uppercase',
                   }}
                 >
                   Restore Date & Time
@@ -1401,75 +3038,140 @@ export function InterruptionEntryPage({
 
                 <input
                   type="datetime-local"
-                  value={restoreTime}
-                  onChange={(e) =>
+
+                  value={
+                    restoreTime
+                  }
+
+                  onChange={(
+                    e
+                  ) =>
                     setRestoreTime(
                       e.target.value
                     )
                   }
+
                   style={{
-                    width: "100%",
-                    boxSizing: "border-box",
+                    width:
+                      '100%',
+
+                    boxSizing:
+                      'border-box',
+
                     border:
-                      "1px solid #CBD5E1",
-                    borderRadius: 11,
-                    padding: 12,
-                    background: "#F8FAFC",
-                    color: "#1E293B",
-                    fontSize: 14,
-                    fontWeight: 600,
+                      '1px solid #CBD5E1',
+
+                    borderRadius:
+                      11,
+
+                    padding:
+                      12,
+
+                    background:
+                      '#F8FAFC',
+
+                    color:
+                      '#1E293B',
+
+                    fontSize:
+                      14,
+
+                    fontWeight:
+                      600,
                   }}
                 />
               </div>
 
               <div
                 style={{
-                  marginTop: 20,
-                  display: "flex",
-                  gap: 10,
+                  marginTop:
+                    20,
+
+                  display:
+                    'flex',
+
+                  gap:
+                    10,
                 }}
               >
                 <button
-                  disabled={restoring}
+                  type="button"
+
+                  disabled={
+                    restoring
+                  }
+
                   onClick={() =>
                     setSelectedInterruption(
                       null
                     )
                   }
+
                   style={{
-                    flex: 1,
+                    flex:
+                      1,
+
                     border:
-                      "1px solid #CBD5E1",
-                    borderRadius: 11,
-                    padding: 12,
-                    background: "#ffffff",
-                    color: "#475569",
-                    fontWeight: 700,
+                      '1px solid #CBD5E1',
+
+                    borderRadius:
+                      11,
+
+                    padding:
+                      12,
+
+                    background:
+                      '#ffffff',
+
+                    color:
+                      '#475569',
+
+                    fontWeight:
+                      700,
                   }}
                 >
                   Cancel
                 </button>
 
                 <button
-                  disabled={restoring}
+                  type="button"
+
+                  disabled={
+                    restoring
+                  }
+
                   onClick={() =>
                     void restoreFeeder()
                   }
+
                   style={{
-                    flex: 1.5,
-                    border: "none",
-                    borderRadius: 11,
-                    padding: 12,
-                    background: restoring
-                      ? "#94A3B8"
-                      : "#059669",
-                    color: "#ffffff",
-                    fontWeight: 700,
+                    flex:
+                      1.5,
+
+                    border:
+                      'none',
+
+                    borderRadius:
+                      11,
+
+                    padding:
+                      12,
+
+                    background:
+                      restoring
+                        ? '#94A3B8'
+                        : '#059669',
+
+                    color:
+                      '#ffffff',
+
+                    fontWeight:
+                      700,
                   }}
                 >
                   {restoring
-                    ? "Restoring..."
-                    : "Restore"}
+                    ? 'Restoring...'
+                    : 'Restore'}
                 </button>
               </div>
             </div>
@@ -1494,18 +3196,32 @@ function ModalRow({
   return (
     <div
       style={{
-        padding: "11px 0",
-        borderBottom: "1px solid #E2E8F0",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        gap: 15,
+        padding:
+          '11px 0',
+
+        borderBottom:
+          '1px solid #E2E8F0',
+
+        display:
+          'flex',
+
+        justifyContent:
+          'space-between',
+
+        alignItems:
+          'flex-start',
+
+        gap:
+          15,
       }}
     >
       <span
         style={{
-          color: "#64748B",
-          fontSize: 12,
+          color:
+            '#64748B',
+
+          fontSize:
+            12,
         }}
       >
         {label}
@@ -1513,10 +3229,23 @@ function ModalRow({
 
       <span
         style={{
-          color: "#1E293B",
-          fontSize: 13,
-          fontWeight: 700,
-          textAlign: "right",
+          color:
+            '#1E293B',
+
+          fontSize:
+            13,
+
+          fontWeight:
+            700,
+
+          textAlign:
+            'right',
+
+          maxWidth:
+            '65%',
+
+          overflowWrap:
+            'anywhere',
         }}
       >
         {value}

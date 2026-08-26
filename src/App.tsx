@@ -258,7 +258,9 @@ function Shell() {
 
       page =
         selectedModule === 'manual' ? (
-          <DashboardLogbookPage />
+          <DashboardLogbookPage
+  onBack={back}
+/>
         ) : (
           <DashboardPage
             onNavigate={(tab) =>
@@ -485,7 +487,9 @@ function Shell() {
 
       page =
         selectedModule === 'manual' ? (
-          <DashboardLogbookPage />
+         <DashboardLogbookPage
+  onBack={back}
+/>
         ) : (
           <DashboardPage
             onNavigate={(tab) =>

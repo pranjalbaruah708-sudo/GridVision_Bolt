@@ -89,7 +89,15 @@ export function AnalyticsPage() {
   // ----- Interruption Causes: pie -----------------------------------------
   const causeSlices = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const i of ints) counts.set(i.reason, (counts.get(i.reason) ?? 0) + 1);
+  for (const i of ints) {
+  const cause =
+    i.cause?.trim() || "Others";
+
+  counts.set(
+    cause,
+    (counts.get(cause) ?? 0) + 1
+  );
+}
     const labels = ['Equipment Fault', 'External Fault', 'Scheduled Work', 'Overload', 'Others'];
     return labels
       .map((label, idx) => ({

@@ -33,13 +33,13 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
   const downloadCsv = () => {
     const header = ['Date', 'Time', 'Feeder', 'MW', 'Voltage (kV)', 'Current (A)', 'Remarks'];
     const lines = rows.map((r) => [
-      r.entry_date,
-      r.entry_time,
+      r.actual_event_time,
+
       activeFeeders.find((f) => f.id === r.feeder_id)?.name ?? '—',
       r.mw,
       r.voltage_kv,
       r.current_a,
-      `"${r.remarks.replace(/"/g, '""')}"`,
+      `"${r.remarks?.replace(/"/g, '""') || ''}"`,
     ].join(','));
     const csv = [header.join(','), ...lines].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -93,8 +93,8 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
                 <tbody className="divide-y divide-gray-100">
                   {rows.map((r) => (
                     <tr key={r.id} className="hover:bg-blue-50/40">
-                      <td className="whitespace-nowrap px-3 py-2 text-gray-700">{r.entry_date}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-gray-700">{r.entry_time}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-gray-700">{r.actual_event_time}</td>
+
                       <td className="whitespace-nowrap px-3 py-2 text-gray-700">
                         {activeFeeders.find((f) => f.id === r.feeder_id)?.name ?? '—'}
                       </td>
