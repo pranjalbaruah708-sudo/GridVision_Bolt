@@ -1016,6 +1016,14 @@ export default function InterruptionAnalysis() {
       'COUNT'
     );
 
+  const [
+    topProblemsMetric,
+    setTopProblemsMetric,
+  ] =
+    useState<CauseMetric>(
+      'COUNT'
+    );
+
   /* =======================================================
      DRILL DOWN
   ======================================================= */
@@ -1517,6 +1525,32 @@ export default function InterruptionAnalysis() {
       [
         filteredRows,
         stationNameMap,
+      ]
+    );
+
+  const topProblemStations =
+    useMemo(
+      () =>
+        [...stationStats]
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              topProblemsMetric ===
+              'DURATION'
+                ? b.durationMinutes -
+                  a.durationMinutes
+                : b.count -
+                  a.count
+          )
+          .slice(
+            0,
+            3
+          ),
+      [
+        stationStats,
+        topProblemsMetric,
       ]
     );
 
@@ -2331,8 +2365,12 @@ export default function InterruptionAnalysis() {
               a,
               b
             ) =>
-              b.count -
-              a.count
+              topProblemsMetric ===
+              'DURATION'
+                ? b.durationMinutes -
+                  a.durationMinutes
+                : b.count -
+                  a.count
           )
           .slice(
             0,
@@ -2343,6 +2381,7 @@ export default function InterruptionAnalysis() {
         filteredRows,
         feederMap,
         stationNameMap,
+        topProblemsMetric,
       ]
     );
 
@@ -3874,19 +3913,62 @@ export default function InterruptionAnalysis() {
         ================================================== */}
 
         <Card>
-          <SectionHeading
-            icon={
-              <AlertTriangle
-                size={
-                  18
-                }
-              />
+          <div
+            style={
+              sectionHeaderWithControlStyle
             }
+          >
+            <SectionHeading
+              icon={
+                <AlertTriangle
+                  size={
+                    18
+                  }
+                />
+              }
 
-            title="Top Problems"
+              title="Top Problems"
 
-            subtitle="Highest interruption frequency during the selected period"
-          />
+              subtitle={
+                topProblemsMetric ===
+                'COUNT'
+                  ? 'Highest interruption frequency during the selected period'
+                  : 'Highest interruption duration during the selected period'
+              }
+
+              noMargin
+            />
+
+            <SegmentedToggle
+              options={[
+                {
+                  value:
+                    'COUNT',
+                  label:
+                    'Number',
+                },
+                {
+                  value:
+                    'DURATION',
+                  label:
+                    'Duration',
+                },
+              ]}
+
+              value={
+                topProblemsMetric
+              }
+
+              onChange={(
+                value
+              ) =>
+                setTopProblemsMetric(
+                  value as
+                    CauseMetric
+                )
+              }
+            />
+          </div>
 
           <div
             className="gv-ia-top-grid"
@@ -3900,11 +3982,7 @@ export default function InterruptionAnalysis() {
                 Top Problem Stations
               </div>
 
-              {stationStats
-                .slice(
-                  0,
-                  3
-                )
+              {topProblemStations
                 .map(
                   (
                     row,
@@ -3924,16 +4002,28 @@ export default function InterruptionAnalysis() {
                         row.stationName
                       }
 
-                      primary={`${row.count} interruptions`}
+                      primary={
+                        topProblemsMetric ===
+                        'COUNT'
+                          ? `${row.count} interruptions`
+                          : formatDuration(
+                              row.durationMinutes
+                            )
+                      }
 
-                      secondary={`${formatDuration(
-                        row.durationMinutes
-                      )} hrs`}
+                      secondary={
+                        topProblemsMetric ===
+                        'COUNT'
+                          ? `${formatDuration(
+                              row.durationMinutes
+                            )} hrs`
+                          : `${row.count} interruptions`
+                      }
                     />
                   )
                 )}
 
-              {stationStats.length ===
+              {topProblemStations.length ===
                 0 && (
                 <NoData />
               )}
@@ -3965,11 +4055,23 @@ export default function InterruptionAnalysis() {
 
                     title={`${row.feederName} (${row.stationName})`}
 
-                    primary={`${row.count} interruptions`}
+                    primary={
+                      topProblemsMetric ===
+                      'COUNT'
+                        ? `${row.count} interruptions`
+                        : formatDuration(
+                            row.durationMinutes
+                          )
+                    }
 
-                    secondary={`${formatDuration(
-                      row.durationMinutes
-                    )} hrs`}
+                    secondary={
+                      topProblemsMetric ===
+                      'COUNT'
+                        ? `${formatDuration(
+                            row.durationMinutes
+                          )} hrs`
+                        : `${row.count} interruptions`
+                    }
                   />
                 )
               )}

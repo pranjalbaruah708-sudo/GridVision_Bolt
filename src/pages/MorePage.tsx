@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   ChevronRight,
   Settings,
@@ -15,6 +16,7 @@ import {
 import { Screen, AppHeader, PageBody } from '@/components/ui/Page';
 import { useApp } from '@/context/AppContext';
 import { createNotification } from '@/services/notificationService';
+import { SignOutConfirmationDialog } from '@/components/SignOutConfirmationDialog';
 
 type MoreItem = {
   id: string;
@@ -98,9 +100,10 @@ export function MorePage({
 }: {
   onOpen: (id: string) => void;
   userEmail: string | null;
-  onSignOut: () => void;
+  onSignOut: () => Promise<void>;
 }) {
   const { activeStation } = useApp();
+  const [showSignOutConfirmation, setShowSignOutConfirmation] = useState(false);
 
   async function testNotification() {
     const testStationId =
@@ -222,7 +225,7 @@ export function MorePage({
         {/* Sign Out */}
 
         <button
-          onClick={onSignOut}
+          onClick={() => setShowSignOutConfirmation(true)}
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50 active:scale-[0.98]"
         >
           <LogOut className="h-4 w-4" />
@@ -234,6 +237,7 @@ export function MorePage({
         <p className="mt-6 text-center text-[10px] text-gray-400">
           GridVision v1.0.0 · Build 2024.05
         </p>
+        <SignOutConfirmationDialog open={showSignOutConfirmation} onCancel={() => setShowSignOutConfirmation(false)} onConfirm={onSignOut} />
       </PageBody>
     </Screen>
   );

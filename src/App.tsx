@@ -11,8 +11,18 @@ import { DashboardLogbookPage } from '@/pages/DashboardLogbookPage';
 import AnalysisLogbook1 from '@/pages/AnalysisLogbook1';
 
 import { AlertsPage } from '@/pages/AlertsPage';
-import { ReportsPage } from '@/pages/ReportsPage';
-import { LogBookReportPage } from '@/pages/LogBookReportPage';
+import {
+  ReportsPage,
+  type ReportType,
+} from '@/pages/ReportsPage';
+import { LogBookReportPage } from '@/pages/Reports/LogBookReportPage';
+import { InterruptionReportPage } from '@/pages/Reports/InterruptionReportPage';
+import { LoadEnergyReportPage } from '@/pages/Reports/LoadEnergyReportPage';
+import { DataCompletenessReportPage } from '@/pages/Reports/DataCompletenessReportPage';
+import { ParameterExceptionReportPage } from '@/pages/Reports/ParameterExceptionReportPage';
+import { PerformanceReportPage } from '@/pages/Reports/PerformanceReportPage';
+import { ExecutiveSummaryReportPage } from '@/pages/Reports/ExecutiveSummaryReportPage';
+import { NotificationDeliveryReportPage, OperatorActivityReportPage } from '@/pages/Reports/AdministrativeReportPages';
 
 import { OperatorEntryPage } from '@/pages/OperatorEntryPage';
 import { InterruptionEntryPage } from '@/pages/InterruptionEntryPage';
@@ -33,11 +43,11 @@ import {
 
 
 function Shell() {
-  const { route, go, back } = useRouter();
+  const { route, go } = useRouter();
   const auth = useAuth();
 
   const [selectedModule, setSelectedModule] =
-    useState<'manual' | 'scada' | null>(null);
+    useState<'manual' | 'scada' | 'shutdown' | null>(null);
 
 
   // ======================================================
@@ -62,6 +72,28 @@ function Shell() {
       setSelectedModule(null);
     }
   }, [auth.session]);
+
+  const handleSignOut = async () => {
+    try {
+      console.log('🚪 Starting logout...');
+      await deactivateCurrentDeviceToken();
+      console.log('✅ Device token deactivated successfully.');
+      await auth.signOut();
+      setSelectedModule(null);
+      console.log('✅ Supabase logout completed.');
+    } catch (error) {
+      console.error('❌ Logout failed:', error);
+      throw error;
+    }
+  };
+
+  const returnToModuleSelection = () => {
+    setSelectedModule(null);
+    go({ tab: 'dashboard' });
+  };
+
+  const returnToReports = () => go({ tab: 'reports' });
+  const returnToMore = () => go({ tab: 'more' });
 
 
   // ======================================================
@@ -99,13 +131,17 @@ function Shell() {
           'User'
         }
         role="System Operator"
-        permissions={{
-          manual: true,
-          scada: true,
+        avatarUrl={auth.user?.user_metadata?.avatar_url ?? null}
+        onSelectModule={(module) => setSelectedModule(module)}
+        onNotifications={() => {
+          setSelectedModule('manual');
+          go({ tab: 'alerts' });
         }}
-        onSelectModule={(module) =>
-          setSelectedModule(module)
-        }
+        onSettings={() => {
+          setSelectedModule('manual');
+          go({ tab: 'more', sub: 'settings' });
+        }}
+        onLogout={handleSignOut}
       />
     );
   }
@@ -126,7 +162,7 @@ function Shell() {
   ) {
     return (
       <>
-        <LogBookReportPage onBack={back} />
+        <LogBookReportPage onBack={returnToReports} />
 
         <BottomNav
           active="reports"
@@ -136,6 +172,98 @@ function Shell() {
         />
       </>
     );
+  }
+
+  if (
+    route.tab === 'reports' &&
+    route.sub === 'interruption-report'
+  ) {
+    return (
+      <>
+        <InterruptionReportPage onBack={returnToReports} />
+
+        <BottomNav
+          active="reports"
+          onNavigate={(tab) =>
+            go({ tab })
+          }
+        />
+      </>
+    );
+  }
+
+  if (
+    route.tab === 'reports' &&
+    route.sub === 'load-energy-report'
+  ) {
+    return (
+      <>
+        <LoadEnergyReportPage onBack={returnToReports} />
+
+        <BottomNav
+          active="reports"
+          onNavigate={(tab) =>
+            go({ tab })
+          }
+        />
+      </>
+    );
+  }
+
+  if (
+    route.tab === 'reports' &&
+    route.sub === 'data-completeness-report'
+  ) {
+    return (
+      <>
+        <DataCompletenessReportPage onBack={returnToReports} />
+
+        <BottomNav
+          active="reports"
+          onNavigate={(tab) =>
+            go({ tab })
+          }
+        />
+      </>
+    );
+  }
+
+  if (
+    route.tab === 'reports' &&
+    route.sub === 'parameter-exception-report'
+  ) {
+    return (
+      <>
+        <ParameterExceptionReportPage onBack={returnToReports} />
+
+        <BottomNav
+          active="reports"
+          onNavigate={(tab) =>
+            go({ tab })
+          }
+        />
+      </>
+    );
+  }
+
+  if (route.tab === 'reports' && route.sub === 'station-performance-report') {
+    return <><PerformanceReportPage entity="STATION" onBack={returnToReports} /><BottomNav active="reports" onNavigate={(tab) => go({ tab })} /></>;
+  }
+
+  if (route.tab === 'reports' && route.sub === 'feeder-performance-report') {
+    return <><PerformanceReportPage entity="FEEDER" onBack={returnToReports} /><BottomNav active="reports" onNavigate={(tab) => go({ tab })} /></>;
+  }
+
+  if (route.tab === 'reports' && route.sub === 'executive-summary-report') {
+    return <><ExecutiveSummaryReportPage onBack={returnToReports} /><BottomNav active="reports" onNavigate={(tab) => go({ tab })} /></>;
+  }
+
+  if (route.tab === 'reports' && route.sub === 'operator-activity-report') {
+    return <><OperatorActivityReportPage onBack={returnToReports} /><BottomNav active="reports" onNavigate={(tab) => go({ tab })} /></>;
+  }
+
+  if (route.tab === 'reports' && route.sub === 'notification-delivery-report') {
+    return <><NotificationDeliveryReportPage onBack={returnToReports} /><BottomNav active="reports" onNavigate={(tab) => go({ tab })} /></>;
   }
 
 
@@ -150,7 +278,7 @@ function Shell() {
     return (
       <>
         <OperatorEntryPage
-          onBack={back}
+          onBack={returnToMore}
         />
 
         <BottomNav
@@ -175,7 +303,7 @@ function Shell() {
     return (
       <>
         <InterruptionEntryPage
-          onBack={back}
+          onBack={returnToMore}
         />
 
         <BottomNav
@@ -199,7 +327,7 @@ function Shell() {
   ) {
     return (
       <>
-        <SettingsPage onBack={back} />
+        <SettingsPage onBack={returnToMore} />
 
         <BottomNav
           active="more"
@@ -223,7 +351,7 @@ function Shell() {
     return (
       <>
         <NotificationTestPage
-          onBack={back}
+          onBack={returnToMore}
         />
 
         <BottomNav
@@ -259,8 +387,11 @@ function Shell() {
       page =
         selectedModule === 'manual' ? (
           <DashboardLogbookPage
-  onBack={back}
-/>
+            onBack={returnToModuleSelection}
+            onNavigate={(tab) =>
+              go({ tab })
+            }
+          />
         ) : (
           <DashboardPage
             onNavigate={(tab) =>
@@ -283,13 +414,7 @@ function Shell() {
 
       page = (
         <AnalysisLogbook1
-          onBack={() => {
-            setSelectedModule(null);
-
-            go({
-              tab: 'dashboard',
-            });
-          }}
+          onBack={returnToModuleSelection}
         />
       );
 
@@ -304,13 +429,7 @@ function Shell() {
 
       page = (
         <AlertsPage
-          onBack={() => {
-            setSelectedModule(null);
-
-            go({
-              tab: 'dashboard',
-            });
-          }}
+          onBack={returnToModuleSelection}
         />
       );
 
@@ -325,20 +444,55 @@ function Shell() {
 
       page = (
         <ReportsPage
-          onBack={() => {
-            setSelectedModule(null);
+          onBack={returnToModuleSelection}
 
-            go({
-              tab: 'dashboard',
-            });
+          onOpenReport={(reportType: ReportType) => {
+            if (reportType === 'daily-log-book') {
+              go({
+                tab: 'reports',
+                sub: 'log-book',
+              });
+            }
+            if (reportType === 'interruption') {
+              go({
+                tab: 'reports',
+                sub: 'interruption-report',
+              });
+            }
+            if (reportType === 'load-energy') {
+              go({
+                tab: 'reports',
+                sub: 'load-energy-report',
+              });
+            }
+            if (reportType === 'data-completeness') {
+              go({
+                tab: 'reports',
+                sub: 'data-completeness-report',
+              });
+            }
+            if (reportType === 'parameter-exceptions') {
+              go({
+                tab: 'reports',
+                sub: 'parameter-exception-report',
+              });
+            }
+            if (reportType === 'station-performance') {
+              go({ tab: 'reports', sub: 'station-performance-report' });
+            }
+            if (reportType === 'feeder-performance') {
+              go({ tab: 'reports', sub: 'feeder-performance-report' });
+            }
+            if (reportType === 'executive-summary') {
+              go({ tab: 'reports', sub: 'executive-summary-report' });
+            }
+            if (reportType === 'operator-activity') {
+              go({ tab: 'reports', sub: 'operator-activity-report' });
+            }
+            if (reportType === 'notification-delivery') {
+              go({ tab: 'reports', sub: 'notification-delivery-report' });
+            }
           }}
-
-          onOpenReport={() =>
-            go({
-              tab: 'reports',
-              sub: 'log-book',
-            })
-          }
         />
       );
 
@@ -357,40 +511,7 @@ function Shell() {
             auth.user?.email ?? null
           }
 
-          // --------------------------------------------
-          // LOGOUT
-          //
-          // First deactivate THIS device's FCM token.
-          // Then sign out from Supabase.
-          // --------------------------------------------
-
-          onSignOut={async () => {
-            try {
-              console.log(
-                '🚪 Starting logout...'
-              );
-
-              await deactivateCurrentDeviceToken();
-
-              console.log(
-                '✅ Device token deactivated successfully.'
-              );
-
-              setSelectedModule(null);
-
-              await auth.signOut();
-
-              console.log(
-                '✅ Supabase logout completed.'
-              );
-
-            } catch (error) {
-              console.error(
-                '❌ Logout failed:',
-                error
-              );
-            }
-          }}
+          onSignOut={handleSignOut}
 
 
           // --------------------------------------------
@@ -488,8 +609,11 @@ function Shell() {
       page =
         selectedModule === 'manual' ? (
          <DashboardLogbookPage
-  onBack={back}
-/>
+           onBack={returnToModuleSelection}
+           onNavigate={(tab) =>
+             go({ tab })
+           }
+         />
         ) : (
           <DashboardPage
             onNavigate={(tab) =>

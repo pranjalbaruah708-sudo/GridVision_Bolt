@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { ArrowLeft, CalendarDays } from "lucide-react";
+import { useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 
 import LoadEnergyAnalysis from "./analytics/LoadEnergyAnalysis";
 import InterruptionAnalysis from "./analytics/InterruptionAnalysis";
 import IndicesAnalysis from "./analytics/IndicesAnalysis";
+import ScreenExportMenu from "@/components/ScreenExportMenu";
 
   const tabs = [
     "Load / Energy Analysis",
@@ -17,7 +18,9 @@ import IndicesAnalysis from "./analytics/IndicesAnalysis";
 }: {
   onBack: () => void;
 }) {
-  console.log("******** AnalysisLogbook1 Loaded ********");
+  const exportContentRef = useRef<HTMLDivElement>(null);
+
+  console.log("******** AnalysisLogbook2 Loaded ********");
 
   const [activeTab, setActiveTab] = useState(
     "Load / Energy Analysis"
@@ -72,7 +75,10 @@ import IndicesAnalysis from "./analytics/IndicesAnalysis";
             Analytics
           </h2>
 
-          <CalendarDays size={24} />
+          <ScreenExportMenu
+            contentRef={exportContentRef}
+            title={`GridVision ${activeTab}`}
+          />
         </div>
 
         {/* ---------- Tabs ---------- */}
@@ -123,6 +129,7 @@ import IndicesAnalysis from "./analytics/IndicesAnalysis";
       {/* ---------- BODY ---------- */}
 
       <div
+        ref={exportContentRef}
         style={{
           flex: 1,
           overflowY: "auto",

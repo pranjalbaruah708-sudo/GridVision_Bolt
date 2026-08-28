@@ -11,11 +11,17 @@ ALTER TABLE interruptions
 
 ALTER TABLE interruptions
   ADD CONSTRAINT interruptions_lifecycle_consistency CHECK (
-    (status = 'open' AND restored_at IS NULL)
+    (current_status = 'OPEN' AND interruption_end IS NULL)
     OR
-    (status = 'closed' AND restored_at IS NOT NULL AND restored_at >= started_at)
+    (
+      current_status = 'RESTORED'
+      AND interruption_end IS NOT NULL
+      AND interruption_end >= interruption_start
+    )
+    OR
+    current_status = 'CANCELLED'
   );
 
 CREATE UNIQUE INDEX IF NOT EXISTS interruptions_one_open_per_feeder
   ON interruptions (feeder_id)
-  WHERE status = 'open' AND feeder_id IS NOT NULL;
+  WHERE current_status = 'OPEN' AND feeder_id IS NOT NULL;
