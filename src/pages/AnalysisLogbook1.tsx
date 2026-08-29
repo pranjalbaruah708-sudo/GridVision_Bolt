@@ -20,8 +20,6 @@ import ScreenExportMenu from "@/components/ScreenExportMenu";
 }) {
   const exportContentRef = useRef<HTMLDivElement>(null);
 
-  console.log("******** AnalysisLogbook2 Loaded ********");
-
   const [activeTab, setActiveTab] = useState(
     "Load / Energy Analysis"
   );

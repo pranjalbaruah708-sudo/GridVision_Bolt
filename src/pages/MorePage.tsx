@@ -1,244 +1,76 @@
-import { useState } from 'react';
-import {
-  ChevronRight,
-  Settings,
-  Bell,
-  FileText,
-  BarChart2,
-  PencilLine,
-  HelpCircle,
-  LogOut,
-  User,
-  Smartphone,
-  ZapOff,
-} from 'lucide-react';
-
-import { Screen, AppHeader, PageBody } from '@/components/ui/Page';
-import { useApp } from '@/context/AppContext';
-import { createNotification } from '@/services/notificationService';
+import { useMemo, useState } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import type { LucideIcon } from 'lucide-react';
+import { ChevronRight, ClipboardPenLine, FileCog, GitBranch, HelpCircle, LogOut, Network, Power, Settings, ShieldCheck, SlidersHorizontal, UsersRound, ZapOff } from 'lucide-react';
+import { AppHeader, PageBody, Screen } from '@/components/ui/Page';
 import { SignOutConfirmationDialog } from '@/components/SignOutConfirmationDialog';
+import { useApp } from '@/context/AppContext';
+import { getRoleLabel, hasCapability, type AppRole, type Capability } from '@/security/permissions';
 
-type MoreItem = {
-  id: string;
-  label: string;
-  desc: string;
-  icon: typeof Settings;
-  color: string;
-};
+export type MoreDestination = 'profile' | 'operator-entry' | 'interruption-entry' | 'organisation-structure' | 'network-master-data' | 'users-access' | 'system-configuration' | 'audit-activity' | 'settings' | 'help-about';
 
-const TOOLS: MoreItem[] = [
-  {
-    id: 'operator-entry',
-    label: 'Operator Entry',
-    desc: 'Manual parameter logging',
-    icon: PencilLine,
-    color: 'bg-blue-600',
-  },
+type MenuItem = { id: MoreDestination; label: string; description: string; icon: LucideIcon; tone: string; capabilities?: readonly Capability[]; badge?: (role: AppRole) => string | null };
 
-  {
-    id: 'interruption-entry',
-    label: 'Interruption Entry',
-    desc: 'Record feeder trips & restoration',
-    icon: ZapOff,
-    color: 'bg-red-600',
-  },
-
-  {
-    id: 'settings',
-    label: 'Settings',
-    desc: 'App preferences & notifications',
-    icon: Settings,
-    color: 'bg-slate-700',
-  },
-
-  {
-    id: 'analytics',
-    label: 'Analytics',
-    desc: 'Charts & performance trends',
-    icon: BarChart2,
-    color: 'bg-rose-500',
-  },
-
-  {
-    id: 'reports',
-    label: 'Reports',
-    desc: 'Generate & export reports',
-    icon: FileText,
-    color: 'bg-emerald-600',
-  },
-
-  {
-    id: 'alerts',
-    label: 'Alerts',
-    desc: 'View active notifications',
-    icon: Bell,
-    color: 'bg-amber-500',
-  },
-
-  // TEMPORARY - Notification testing
-  {
-    id: 'notification-test',
-    label: 'Notification Test',
-    desc: 'Test push notifications',
-    icon: Smartphone,
-    color: 'bg-purple-600',
-  },
-
-  {
-    id: 'help',
-    label: 'Help & Support',
-    desc: 'FAQs & contact information',
-    icon: HelpCircle,
-    color: 'bg-indigo-500',
-  },
+const OPERATIONAL_ITEMS: MenuItem[] = [
+  { id: 'operator-entry', label: 'Parameter Entry', description: 'Record substation operating readings', icon: ClipboardPenLine, tone: 'bg-blue-600', capabilities: ['create_parameter_entry'] },
+  { id: 'interruption-entry', label: 'Interruption Entry', description: 'Record feeder trips and restoration', icon: ZapOff, tone: 'bg-red-600', capabilities: ['create_interruption_entry'] },
 ];
 
-export function MorePage({
-  onOpen,
-  userEmail,
-  onSignOut,
-}: {
-  onOpen: (id: string) => void;
-  userEmail: string | null;
-  onSignOut: () => Promise<void>;
-}) {
-  const { activeStation } = useApp();
+const ADMINISTRATION_ITEMS: MenuItem[] = [
+  { id: 'organisation-structure', label: 'Organisation Structure', description: 'View organisational and station hierarchy', icon: GitBranch, tone: 'bg-violet-600', capabilities: ['view_organisation_structure'], badge: (role) => hasCapability(role, 'manage_offices') ? 'Manage' : 'View' },
+  { id: 'network-master-data', label: 'Network Master Data', description: 'Stations, feeders and network configuration', icon: Network, tone: 'bg-cyan-600', capabilities: ['manage_scoped_feeders', 'manage_all_feeders'] },
+  { id: 'users-access', label: 'Users & Access', description: 'View and manage authorised users', icon: UsersRound, tone: 'bg-indigo-600', capabilities: ['view_scoped_users', 'manage_users'] },
+  { id: 'system-configuration', label: 'System Configuration', description: 'Operational and system settings', icon: SlidersHorizontal, tone: 'bg-slate-700', capabilities: ['manage_scoped_configuration', 'manage_system_configuration'] },
+  { id: 'audit-activity', label: 'Audit Activity', description: 'Review operational and administrative activity', icon: ShieldCheck, tone: 'bg-amber-600', capabilities: ['view_scoped_audit', 'view_all_audit'] },
+];
+
+const SUPPORT_ITEMS: MenuItem[] = [
+  { id: 'settings', label: 'Settings', description: 'App preferences and notifications', icon: Settings, tone: 'bg-slate-700' },
+  { id: 'help-about', label: 'Help & About', description: 'Application help and support information', icon: HelpCircle, tone: 'bg-blue-600' },
+];
+
+function initialsFor(name: string) {
+  return name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'GV';
+}
+
+function isAllowed(item: MenuItem, role: AppRole) {
+  return !item.capabilities || item.capabilities.some((capability) => hasCapability(role, capability));
+}
+
+function MenuRows({ items, role, onOpen }: { items: MenuItem[]; role: AppRole; onOpen: (id: MoreDestination) => void }) {
+  return <div className="overflow-hidden rounded-2xl bg-white shadow-sm"><div className="divide-y divide-slate-100">{items.filter((item) => isAllowed(item, role)).map((item) => {
+    const Icon = item.icon;
+    const badge = item.badge?.(role);
+    return <button key={item.id} type="button" onClick={() => onOpen(item.id)} className="flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50 active:bg-slate-100"><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${item.tone}`}><Icon className="h-5 w-5 text-white" /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{item.description}</span></span>{badge && <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">{badge}</span>}<ChevronRight className="h-4 w-4 shrink-0 text-slate-300" /></button>;
+  })}</div></div>;
+}
+
+export function MorePage({ onOpen, onSwitchModule, fullName, userEmail, avatarUrl, role, onSignOut }: { onOpen: (id: MoreDestination) => void; onSwitchModule: () => void; fullName: string; userEmail: string | null; avatarUrl?: string | null; role: AppRole; onSignOut: () => Promise<void> }) {
+  const { activeStation, stations } = useApp();
   const [showSignOutConfirmation, setShowSignOutConfirmation] = useState(false);
+  const isAndroid = Capacitor.getPlatform() === 'android';
+  const operationalItems = useMemo(() => OPERATIONAL_ITEMS.filter((item) => isAllowed(item, role)), [role]);
+  const administrationItems = useMemo(() => ADMINISTRATION_ITEMS.filter((item) => isAllowed(item, role)), [role]);
+  const scope = role === 'OPERATOR' ? activeStation?.name ?? 'No assigned station' : `${stations.length} accessible station${stations.length === 1 ? '' : 's'}`;
 
-  async function testNotification() {
-    const testStationId =
-      'f41b520a-3cc7-41d4-82de-3ca74f7f2347';
+  return <Screen>
+    <AppHeader title="More" subtitle={`${getRoleLabel(role)} workspace`} className="bg-gradient-to-r from-[#0D47A1] to-[#1565C0]" />
+    <PageBody>
+      <button type="button" onClick={() => onOpen('profile')} className="mb-5 flex min-h-20 w-full items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm transition hover:bg-slate-50 active:bg-slate-100" aria-label="Open My Profile">
+        {avatarUrl ? <img src={avatarUrl} alt="Profile" className="h-12 w-12 rounded-full object-cover" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-blue-700 text-sm font-bold text-white">{initialsFor(fullName)}</span>}
+        <span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-900">{fullName}</span><span className="mt-0.5 block text-xs font-medium text-blue-700">{getRoleLabel(role)}</span><span className="mt-0.5 block truncate text-[11px] text-slate-500">{scope}{userEmail ? ` · ${userEmail}` : ''}</span></span><ChevronRight className="h-5 w-5 shrink-0 text-slate-300" />
+      </button>
 
-    try {
-      console.log('🔔 Starting notification test...');
-      console.log('🏭 Test station:', testStationId);
+      {operationalItems.length > 0 && <section className="mb-5"><h2 className="mb-2 px-1 text-xs font-bold tracking-wide text-slate-500">OPERATIONAL TOOLS</h2><MenuRows items={operationalItems} role={role} onOpen={onOpen} /></section>}
+      {administrationItems.length > 0 && <section className="mb-5"><h2 className="mb-2 px-1 text-xs font-bold tracking-wide text-slate-500">ADMINISTRATION</h2><MenuRows items={administrationItems} role={role} onOpen={onOpen} /></section>}
 
-      const result = await createNotification({
-        stationId: testStationId,
-        feederId: null,
-        message: 'Test notification from GridVision',
-        maxUnitType: 'DIVISION',
-      });
+      <section className="mb-5"><h2 className="mb-2 px-1 text-xs font-bold tracking-wide text-slate-500">APP &amp; SUPPORT</h2><div className="overflow-hidden rounded-2xl bg-white shadow-sm"><button type="button" onClick={onSwitchModule} className="flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50 active:bg-slate-100"><span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600"><FileCog className="h-5 w-5 text-white" /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-900">Switch Module</span><span className="mt-0.5 block text-xs text-slate-500">Return to the GridVision module selector</span></span><ChevronRight className="h-4 w-4 text-slate-300" /></button><div className="border-t border-slate-100"><MenuRows items={SUPPORT_ITEMS} role={role} onOpen={onOpen} /></div></div></section>
 
-      console.log(
-        '✅ Notification test successful:',
-        result
-      );
-
-      alert(
-        `Notification created successfully.\n\n` +
-          `Event ID: ${result.event.id}\n` +
-          `Recipients: ${result.recipients.length}`
-      );
-    } catch (error) {
-      console.error(
-        '❌ Notification test failed:',
-        error
-      );
-
-      alert(
-        `Notification test failed.\n\n${
-          error instanceof Error
-            ? error.message
-            : String(error)
-        }`
-      );
-    }
-  }
-
-  return (
-    <Screen>
-      <AppHeader
-        title="More"
-        subtitle="Tools & settings"
-      />
-
-      <PageBody>
-        {/* Profile card */}
-
-        <div className="mb-4 flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm">
-          <div className="grid h-12 w-12 place-items-center rounded-full bg-blue-700 text-white">
-            <User className="h-6 w-6" />
-          </div>
-
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-gray-900">
-              {userEmail ?? 'Field Operator'}
-            </p>
-
-            <p className="text-[11px] text-gray-500">
-              {activeStation?.name ?? 'No station'} · Operator
-            </p>
-          </div>
-        </div>
-
-        {/* Tools list */}
-
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-          <div className="divide-y divide-gray-50">
-            {TOOLS.map((t) => {
-              const Icon = t.icon;
-
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    if (
-                      t.id === 'notification-test'
-                    ) {
-                      testNotification();
-                    } else {
-                      onOpen(t.id);
-                    }
-                  }}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-gray-50"
-                >
-                  {/* Icon */}
-
-                  <div
-                    className={`grid h-9 w-9 flex-shrink-0 place-items-center rounded-lg ${t.color}`}
-                  >
-                    <Icon className="h-4 w-4 text-white" />
-                  </div>
-
-                  {/* Text */}
-
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900">
-                      {t.label}
-                    </p>
-
-                    <p className="truncate text-[11px] text-gray-500">
-                      {t.desc}
-                    </p>
-                  </div>
-
-                  {/* Arrow */}
-
-                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-gray-300" />
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Sign Out */}
-
-        <button
-          onClick={() => setShowSignOutConfirmation(true)}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50 active:scale-[0.98]"
-        >
-          <LogOut className="h-4 w-4" />
-          Sign Out
-        </button>
-
-        {/* Version */}
-
-        <p className="mt-6 text-center text-[10px] text-gray-400">
-          GridVision v1.0.0 · Build 2024.05
-        </p>
-        <SignOutConfirmationDialog open={showSignOutConfirmation} onCancel={() => setShowSignOutConfirmation(false)} onConfirm={onSignOut} />
-      </PageBody>
-    </Screen>
-  );
+      {isAndroid && <button type="button" onClick={() => { void CapacitorApp.minimizeApp(); }} className="mb-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50"><Power className="h-4 w-4" />Close App</button>}
+      <button type="button" onClick={() => setShowSignOutConfirmation(true)} className="flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-red-100 bg-white text-sm font-semibold text-red-600 transition hover:bg-red-50"><LogOut className="h-4 w-4" />Sign Out</button>
+      <p className="mt-6 text-center text-[11px] text-slate-400">GridVision · Secure Operations</p>
+      <SignOutConfirmationDialog open={showSignOutConfirmation} onCancel={() => setShowSignOutConfirmation(false)} onConfirm={onSignOut} />
+    </PageBody>
+  </Screen>;
 }

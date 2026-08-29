@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { AppProvider } from '@/context/AppContext';
 import { useRouter } from '@/hooks/useRouter';
 import { useAuth } from '@/hooks/useAuth';
+import { api } from '@/services/api';
+import { canAccessRoute, getRoleLabel, type AppRole } from '@/security/permissions';
 
 import { BottomNav } from '@/components/BottomNav';
 
@@ -27,19 +29,28 @@ import { NotificationDeliveryReportPage, OperatorActivityReportPage } from '@/pa
 import { OperatorEntryPage } from '@/pages/OperatorEntryPage';
 import { InterruptionEntryPage } from '@/pages/InterruptionEntryPage';
 
-import { MorePage } from '@/pages/MorePage';
+import { MorePage, type MoreDestination } from '@/pages/MorePage';
+import { MoreRouteShell } from '@/pages/MoreRouteShell';
+import { MyProfilePage } from '@/pages/MyProfilePage';
+import { AdministrationPage } from '@/pages/AdministrationPages';
+import { UsersAccessPage } from '@/pages/UsersAccessPage';
+import { SystemConfigurationPage } from '@/pages/SystemConfigurationPage';
+import { AuditActivityPage } from '@/pages/AuditActivityPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 
 import { SignInPage } from '@/pages/SignInPage';
 import { ModuleSelectionReplicaPage } from '@/pages/ModuleSelectionReplicaPage';
 
-import { NotificationTestPage } from '@/pages/NotificationTestPage';
 
 import { Loader2 } from 'lucide-react';
 
 import {
   deactivateCurrentDeviceToken,
 } from '@/pushNotifications';
+
+const MORE_ROUTE_SHELL_TITLES: Partial<Record<MoreDestination, string>> = {
+  'help-about': 'Help & About',
+};
 
 
 function Shell() {
@@ -48,6 +59,8 @@ function Shell() {
 
   const [selectedModule, setSelectedModule] =
     useState<'manual' | 'scada' | 'shutdown' | null>(null);
+  const [role, setRole] = useState<AppRole | null>(null);
+  const [roleLoading, setRoleLoading] = useState(false);
 
 
   // ======================================================
@@ -73,18 +86,37 @@ function Shell() {
     }
   }, [auth.session]);
 
-  const handleSignOut = async () => {
-    try {
-      console.log('🚪 Starting logout...');
-      await deactivateCurrentDeviceToken();
-      console.log('✅ Device token deactivated successfully.');
-      await auth.signOut();
-      setSelectedModule(null);
-      console.log('✅ Supabase logout completed.');
-    } catch (error) {
-      console.error('❌ Logout failed:', error);
-      throw error;
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!auth.session) {
+      setRole(null);
+      setRoleLoading(false);
+      return;
     }
+
+    setRoleLoading(true);
+    void api.getMyRole()
+      .then((nextRole) => {
+        if (!cancelled) setRole(nextRole);
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to load application role:', error);
+        if (!cancelled) setRole(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRoleLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.session]);
+
+  const handleSignOut = async () => {
+    await deactivateCurrentDeviceToken();
+    await auth.signOut();
+    setSelectedModule(null);
   };
 
   const returnToModuleSelection = () => {
@@ -117,6 +149,25 @@ function Shell() {
     return <SignInPage auth={auth} />;
   }
 
+  if (roleLoading) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-[#142851]">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-300" />
+      </div>
+    );
+  }
+
+  if (!role) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-slate-100 p-6 text-center">
+        <div className="max-w-sm rounded-2xl bg-white p-6 shadow-sm">
+          <h1 className="text-lg font-bold text-slate-900">Access not configured</h1>
+          <p className="mt-2 text-sm text-slate-600">Your GridVision account does not have an active application role. Please contact an administrator.</p>
+        </div>
+      </div>
+    );
+  }
+
 
   // ======================================================
   // MODULE SELECTION
@@ -130,7 +181,7 @@ function Shell() {
           auth.user?.email?.split('@')[0] ??
           'User'
         }
-        role="System Operator"
+        role={getRoleLabel(role)}
         avatarUrl={auth.user?.user_metadata?.avatar_url ?? null}
         onSelectModule={(module) => setSelectedModule(module)}
         onNotifications={() => {
@@ -143,6 +194,18 @@ function Shell() {
         }}
         onLogout={handleSignOut}
       />
+    );
+  }
+
+  if (!canAccessRoute(role, route)) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-slate-100 p-6 text-center">
+        <div className="max-w-sm rounded-2xl bg-white p-6 shadow-sm">
+          <h1 className="text-lg font-bold text-slate-900">Access denied</h1>
+          <p className="mt-2 text-sm text-slate-600">You do not have permission to open this page.</p>
+          <button type="button" onClick={returnToModuleSelection} className="mt-5 rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Return to modules</button>
+        </div>
+      </div>
     );
   }
 
@@ -339,29 +402,32 @@ function Shell() {
     );
   }
 
+  const moreRouteShellTitle = route.tab === 'more' && route.sub
+    ? MORE_ROUTE_SHELL_TITLES[route.sub as MoreDestination]
+    : undefined;
 
-  // ------------------------------------------------------
-  // NOTIFICATION TEST
-  // ------------------------------------------------------
+  if (moreRouteShellTitle) {
+    return <><MoreRouteShell title={moreRouteShellTitle} onBack={returnToMore} /><BottomNav active="more" onNavigate={(tab) => go({ tab })} /></>;
+  }
 
-  if (
-    route.tab === 'more' &&
-    route.sub === 'notification-test'
-  ) {
-    return (
-      <>
-        <NotificationTestPage
-          onBack={returnToMore}
-        />
+  if (route.tab === 'more' && route.sub === 'profile') {
+    return <><MyProfilePage user={auth.user!} role={role} onBack={returnToMore} /><BottomNav active="more" onNavigate={(tab) => go({ tab })} /></>;
+  }
 
-        <BottomNav
-          active="more"
-          onNavigate={(tab) =>
-            go({ tab })
-          }
-        />
-      </>
-    );
+  if (route.tab === 'more' && route.sub === 'users-access') {
+    return <><UsersAccessPage role={role} onBack={returnToMore} /><BottomNav active="more" onNavigate={(tab) => go({ tab })} /></>;
+  }
+
+  if (route.tab === 'more' && route.sub === 'system-configuration') {
+    return <><SystemConfigurationPage role={role} onBack={returnToMore} /><BottomNav active="more" onNavigate={(tab) => go({ tab })} /></>;
+  }
+
+  if (route.tab === 'more' && route.sub === 'audit-activity') {
+    return <><AuditActivityPage role={role} onBack={returnToMore} /><BottomNav active="more" onNavigate={(tab) => go({ tab })} /></>;
+  }
+
+  if (route.tab === 'more' && route.sub && ['organisation-structure', 'network-master-data'].includes(route.sub)) {
+    return <><AdministrationPage destination={route.sub as 'organisation-structure' | 'network-master-data'} role={role} onBack={returnToMore} /><BottomNav active="more" onNavigate={(tab) => go({ tab })} /></>;
   }
 
 
@@ -507,93 +573,13 @@ function Shell() {
 
       page = (
         <MorePage
-          userEmail={
-            auth.user?.email ?? null
-          }
-
+          fullName={auth.user?.user_metadata?.full_name ?? auth.user?.email?.split('@')[0] ?? 'User'}
+          userEmail={auth.user?.email ?? null}
+          avatarUrl={auth.user?.user_metadata?.avatar_url ?? null}
+          role={role}
           onSignOut={handleSignOut}
-
-
-          // --------------------------------------------
-          // MORE PAGE NAVIGATION
-          // --------------------------------------------
-
-          onOpen={(id) => {
-
-            switch (id) {
-
-              case 'operator-entry':
-
-                go({
-                  tab: 'more',
-                  sub: 'operator-entry',
-                });
-
-                break;
-
-
-              case 'interruption-entry':
-
-                go({
-                  tab: 'more',
-                  sub: 'interruption-entry',
-                });
-
-                break;
-
-
-              case 'settings':
-
-                go({
-                  tab: 'more',
-                  sub: 'settings',
-                });
-
-                break;
-
-
-              case 'analytics':
-
-                go({
-                  tab: 'analytics',
-                });
-
-                break;
-
-
-              case 'notification-test':
-
-                go({
-                  tab: 'more',
-                  sub: 'notification-test',
-                });
-
-                break;
-
-
-              case 'reports':
-
-                go({
-                  tab: 'reports',
-                });
-
-                break;
-
-
-              case 'alerts':
-
-                go({
-                  tab: 'alerts',
-                });
-
-                break;
-
-
-              default:
-
-                break;
-            }
-          }}
+          onSwitchModule={returnToModuleSelection}
+          onOpen={(id) => go({ tab: 'more', sub: id })}
         />
       );
 

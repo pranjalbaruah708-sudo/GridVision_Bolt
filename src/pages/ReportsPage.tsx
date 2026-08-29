@@ -27,6 +27,7 @@ import {
   api,
   type AppRole,
 } from '@/services/api';
+import { hasCapability } from '@/security/permissions';
 
 export type ReportType =
   | 'daily-log-book'
@@ -192,7 +193,7 @@ export function ReportsPage({
   const groupedReports = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     const visible = REPORT_DEFINITIONS.filter((report) =>
-      (!report.adminOnly || role === 'ADMIN') &&
+      (!report.adminOnly || hasCapability(role, 'view_all_audit')) &&
       (!normalizedSearch || report.title.toLowerCase().includes(normalizedSearch))
     );
 

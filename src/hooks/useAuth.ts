@@ -16,15 +16,11 @@ export function useAuth(): AuthState {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-       console.log("Initial session:", data.session);
       setSession(data.session);
       setLoading(false);
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("Auth event:", event);
-      console.log("Session:", session);
-
       setSession(session);
     });
 

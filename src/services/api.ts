@@ -40,15 +40,47 @@ import type {
   ReliabilityIndex,
   Station,
 } from '@/types';
+import type { AppRole } from '@/security/permissions';
+export type { AppRole } from '@/security/permissions';
+
+export type MyProfile = {
+  full_name: string;
+  employee_code: string | null;
+  phone: string | null;
+  account_role: string;
+  account_active: boolean;
+  assigned_offices: string[];
+  accessible_stations: string[];
+};
+
+export type NotificationDevice = {
+  id: string;
+  platform: string | null;
+  is_active: boolean;
+  updated_at: string | null;
+};
+
+export type OrgUnitType = { unit_type: string; hierarchy_rank: number };
+export type OrgUnitRow = { id: string; code: string; name: string; unit_type: string; parent_id: string | null; parent_name: string | null; active: boolean; archived_at: string | null; child_count: number; station_count: number };
+export type OrgUnitPage = { rows: OrgUnitRow[]; total: number };
+export type OrgUnitDetail = OrgUnitRow & { archive_reason: string | null; child_names: string[]; station_names: string[] };
+export type OrgUnitParentOption = { id: string; name: string; unit_type: string };
+export type AdminStationRow = { id: string; code: string; name: string; location: string | null; voltage_level_kv: number | null; active: boolean; office_count: number; feeder_count: number };
+export type AdminStationDetail = AdminStationRow & { archive_reason: string | null; office_ids: string[]; office_names: string[]; primary_office_id: string | null; authorised_users: string[] };
+export type AdminFeederRow = { id: string; code: string; name: string; station_id: string; station_name: string; voltage_level_kv: number | null; consumer_count: number; active: boolean };
+export type AdminFeederDetail = AdminFeederRow & { archive_reason: string | null; logbook_count: number; interruption_count: number };
+export type UsersAccessRow = { id: string; full_name: string; employee_code: string | null; email: string | null; phone: string | null; role: AppRole; active: boolean; office_names: string[]; station_names: string[]; device_count: number; created_at: string; updated_at: string };
+export type UsersAccessDetail = UsersAccessRow & { office_ids: string[]; station_ids: string[] };
+export type UsersAccessScopeOption = { kind: 'OFFICE' | 'STATION'; id: string; name: string; code: string };
+export type FeederThresholdRow = { id: string; station_id: string; station_name: string; feeder_id: string; feeder_name: string; parameter_code: string; min_value: number | null; max_value: number | null; feeder_active: boolean; updated_at: string; updated_by_name: string | null };
+export type ThresholdScopeOption = { kind: 'STATION' | 'FEEDER'; id: string; name: string; station_id: string; station_name: string };
+export type GlobalNotificationConfig = { id: string; active: boolean; max_unit_type: string; updated_at: string; updated_by_name: string | null };
+export type AdministrationAuditRow = { id: string; created_at: string; action: string; entity_type: string; entity_id: string | null; record_label: string; actor_id: string | null; actor_name: string | null; actor_employee_code: string | null; station_id: string | null; station_name: string | null; org_unit_id: string | null; org_unit_name: string | null; visibility: 'SCOPED' | 'ADMIN_GLOBAL' | 'SUPER_ADMIN_ONLY'; reason: string | null; old_values: Record<string, unknown> | null; new_values: Record<string, unknown> | null };
+export type AdministrationAuditFilterOption = { kind: 'ACTOR' | 'STATION' | 'OFFICE'; id: string; label: string };
 
 /* =========================================================
    APPLICATION ROLE
 ========================================================= */
-
-export type AppRole =
-  | 'OPERATOR'
-  | 'FIELD_OFFICER'
-  | 'ADMIN';
 
 type LoadEnergyAnalysisReading = {
   id: string;
@@ -780,7 +812,9 @@ export const api = {
       data ===
         'FIELD_OFFICER' ||
       data ===
-        'ADMIN'
+        'ADMIN' ||
+      data ===
+        'SUPER_ADMIN'
     ) {
       return data;
     }
@@ -1002,6 +1036,148 @@ async getLoadAnalysisFeederDailyProfile(
       alert_feeders: Number(row?.alert_feeders ?? 0),
     };
   },
+
+  async getMyProfile(): Promise<MyProfile> {
+    const { data, error } = await supabase.rpc('get_my_profile').maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('Your application profile could not be found.');
+    const row = data as Record<string, unknown>;
+    return {
+      full_name: String(row.full_name ?? ''),
+      employee_code: row.employee_code == null ? null : String(row.employee_code),
+      phone: row.phone == null ? null : String(row.phone),
+      account_role: String(row.account_role ?? ''),
+      account_active: Boolean(row.account_active),
+      assigned_offices: Array.isArray(row.assigned_offices) ? row.assigned_offices.map(String) : [],
+      accessible_stations: Array.isArray(row.accessible_stations) ? row.accessible_stations.map(String) : [],
+    };
+  },
+
+  async updateMyProfile({ fullName, phone }: { fullName: string; phone: string | null }): Promise<Pick<MyProfile, 'full_name' | 'phone'>> {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError) throw userError;
+    if (!userData.user) throw new Error('You must be signed in to update your profile.');
+    const { data, error } = await supabase
+      .from('app_users')
+      .update({ full_name: fullName, phone, updated_at: new Date().toISOString() })
+      .eq('id', userData.user.id)
+      .select('full_name, phone')
+      .single();
+    if (error) throw error;
+    return { full_name: String(data.full_name), phone: data.phone == null ? null : String(data.phone) };
+  },
+
+  async getMyNotificationDevices(): Promise<NotificationDevice[]> {
+    const { data, error } = await supabase
+      .from('device_tokens')
+      .select('id, platform, is_active, updated_at')
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      id: row.id,
+      platform: row.platform,
+      is_active: row.is_active,
+      updated_at: row.updated_at,
+    }));
+  },
+
+  async deactivateMyNotificationDevice(deviceId: string): Promise<void> {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError) throw userError;
+    if (!userData.user) throw new Error('You must be signed in to manage devices.');
+    const { error } = await supabase
+      .from('device_tokens')
+      .update({ is_active: false })
+      .eq('id', deviceId)
+      .eq('user_id', userData.user.id);
+    if (error) throw error;
+  },
+
+  async getOrgUnitTypes(): Promise<OrgUnitType[]> {
+    const { data, error } = await supabase.rpc('get_org_unit_types');
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({ unit_type: String(row.unit_type), hierarchy_rank: Number(row.hierarchy_rank) }));
+  },
+
+  async getOrgUnitsPage(search: string, active: boolean | null, page: number, pageSize: number): Promise<OrgUnitPage> {
+    const { data, error } = await supabase.rpc('get_org_units_page', { p_search: search || null, p_active: active, p_page: page, p_page_size: pageSize });
+    if (error) throw error;
+    const rows = (data ?? []).map((row: Record<string, unknown>) => ({
+      id: String(row.id), code: String(row.code), name: String(row.name), unit_type: String(row.unit_type), parent_id: row.parent_id == null ? null : String(row.parent_id), parent_name: row.parent_name == null ? null : String(row.parent_name), active: Boolean(row.active), archived_at: row.archived_at == null ? null : String(row.archived_at), child_count: Number(row.child_count), station_count: Number(row.station_count),
+    }));
+    return { rows, total: rows.length ? Number((data?.[0] as Record<string, unknown>).total_count) : 0 };
+  },
+
+  async getOrgUnitDetail(id: string): Promise<OrgUnitDetail> {
+    const { data, error } = await supabase.rpc('get_org_unit_detail', { p_id: id }).single();
+    if (error) throw error;
+    const row = data as Record<string, unknown>;
+    return { id: String(row.id), code: String(row.code), name: String(row.name), unit_type: String(row.unit_type), parent_id: row.parent_id == null ? null : String(row.parent_id), parent_name: row.parent_name == null ? null : String(row.parent_name), active: Boolean(row.active), archived_at: row.archived_at == null ? null : String(row.archived_at), child_count: 0, station_count: 0, archive_reason: row.archive_reason == null ? null : String(row.archive_reason), child_names: Array.isArray(row.child_names) ? row.child_names.map(String) : [], station_names: Array.isArray(row.station_names) ? row.station_names.map(String) : [] };
+  },
+
+  async getOrgUnitParentOptions(unitType: string, excludeId?: string): Promise<OrgUnitParentOption[]> {
+    const { data, error } = await supabase.rpc('get_org_unit_parent_options', { p_unit_type: unitType, p_exclude_id: excludeId ?? null });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({ id: String(row.id), name: String(row.name), unit_type: String(row.unit_type) }));
+  },
+
+  async saveOrgUnit(input: { id?: string; code: string; name: string; unitType: string; parentId: string | null; reason?: string | null }): Promise<string> {
+    const { data, error } = await supabase.rpc('save_org_unit', { p_id: input.id ?? null, p_code: input.code, p_name: input.name, p_unit_type: input.unitType, p_parent_id: input.parentId, p_reason: input.reason ?? null });
+    if (error) throw error;
+    return String(data);
+  },
+
+  async archiveOrgUnit(id: string, reason: string): Promise<void> {
+    const { error } = await supabase.rpc('archive_org_unit', { p_id: id, p_reason: reason });
+    if (error) throw error;
+  },
+
+  async getAdminStationsPage(search: string, active: boolean | null, page: number, pageSize: number): Promise<{ rows: AdminStationRow[]; total: number }> {
+    const { data, error } = await supabase.rpc('get_stations_admin_page', { p_search: search || null, p_active: active, p_page: page, p_page_size: pageSize }); if (error) throw error;
+    const rows = (data ?? []).map((row: Record<string, unknown>) => ({ id: String(row.id), code: String(row.code), name: String(row.name), location: row.location == null ? null : String(row.location), voltage_level_kv: row.voltage_level_kv == null ? null : Number(row.voltage_level_kv), active: Boolean(row.active), office_count: Number(row.office_count), feeder_count: Number(row.feeder_count) }));
+    return { rows, total: rows.length ? Number((data?.[0] as Record<string, unknown>).total_count) : 0 };
+  },
+  async getAdminStationDetail(id: string): Promise<AdminStationDetail> {
+    const { data, error } = await supabase.rpc('get_station_admin_detail', { p_id: id }).single(); if (error) throw error; const row = data as Record<string, unknown>;
+    return { id: String(row.id), code: String(row.code), name: String(row.name), location: row.location == null ? null : String(row.location), voltage_level_kv: row.voltage_level_kv == null ? null : Number(row.voltage_level_kv), active: Boolean(row.active), office_count: 0, feeder_count: Number(row.feeder_count), archive_reason: row.archive_reason == null ? null : String(row.archive_reason), office_ids: Array.isArray(row.office_ids) ? row.office_ids.map(String) : [], office_names: Array.isArray(row.office_names) ? row.office_names.map(String) : [], primary_office_id: row.primary_office_id == null ? null : String(row.primary_office_id), authorised_users: Array.isArray(row.authorised_users) ? row.authorised_users.map(String) : [] };
+  },
+  async getActiveOfficeOptions(): Promise<OrgUnitParentOption[]> { const { data, error } = await supabase.rpc('get_active_office_options'); if (error) throw error; return (data ?? []).map((row: Record<string, unknown>) => ({ id: String(row.id), name: String(row.name), unit_type: String(row.unit_type) })); },
+  async saveAdminStation(input: { id?: string; code: string; name: string; location: string | null; voltageLevelKv: number | null; officeIds: string[]; primaryOfficeId: string | null; reason?: string | null }): Promise<string> { const { data, error } = await supabase.rpc('save_station_admin', { p_id: input.id ?? null, p_code: input.code, p_name: input.name, p_location: input.location, p_voltage_level_kv: input.voltageLevelKv, p_office_ids: input.officeIds, p_primary_office_id: input.primaryOfficeId, p_reason: input.reason ?? null }); if (error) throw error; return String(data); },
+  async archiveAdminStation(id: string, reason: string): Promise<void> { const { error } = await supabase.rpc('archive_station_admin', { p_id: id, p_reason: reason }); if (error) throw error; },
+  async getAdminFeedersPage(search: string, active: boolean | null, stationId: string | null, page: number, pageSize: number): Promise<{ rows: AdminFeederRow[]; total: number }> { const { data, error } = await supabase.rpc('get_feeders_admin_page', { p_search: search || null, p_active: active, p_station_id: stationId, p_page: page, p_page_size: pageSize }); if (error) throw error; const rows = (data ?? []).map((r: Record<string, unknown>) => ({ id: String(r.id), code: String(r.code), name: String(r.name), station_id: String(r.station_id), station_name: String(r.station_name), voltage_level_kv: r.voltage_level_kv == null ? null : Number(r.voltage_level_kv), consumer_count: Number(r.consumer_count), active: Boolean(r.active) })); return { rows, total: rows.length ? Number((data?.[0] as Record<string, unknown>).total_count) : 0 }; },
+  async getAdminFeederDetail(id: string): Promise<AdminFeederDetail> { const { data, error } = await supabase.rpc('get_feeder_admin_detail', { p_id: id }).single(); if (error) throw error; const r = data as Record<string, unknown>; return { id: String(r.id), code: String(r.code), name: String(r.name), station_id: String(r.station_id), station_name: String(r.station_name), voltage_level_kv: r.voltage_level_kv == null ? null : Number(r.voltage_level_kv), consumer_count: Number(r.consumer_count), active: Boolean(r.active), archive_reason: r.archive_reason == null ? null : String(r.archive_reason), logbook_count: Number(r.logbook_count), interruption_count: Number(r.interruption_count) }; },
+  async getManageableStationOptions(): Promise<{ id: string; name: string; code: string }[]> { const { data, error } = await supabase.rpc('get_manageable_station_options'); if (error) throw error; return (data ?? []).map((r: Record<string, unknown>) => ({ id: String(r.id), name: String(r.name), code: String(r.code) })); },
+  async saveAdminFeeder(input: { id?: string; code: string; name: string; stationId: string; voltageLevelKv: number | null; consumerCount: number; reason?: string | null }): Promise<string> { const { data, error } = await supabase.rpc('save_feeder_admin', { p_id: input.id ?? null, p_code: input.code, p_name: input.name, p_station_id: input.stationId, p_voltage_level_kv: input.voltageLevelKv, p_consumer_count: input.consumerCount, p_reason: input.reason ?? null }); if (error) throw error; return String(data); },
+  async archiveAdminFeeder(id: string, reason: string): Promise<void> { const { error } = await supabase.rpc('archive_feeder_admin', { p_id: id, p_reason: reason }); if (error) throw error; },
+
+  async getUsersAccessPage(input: { search: string; role: AppRole | null; active: boolean | null; officeId: string | null; stationId: string | null; page: number; pageSize: number }): Promise<{ rows: UsersAccessRow[]; total: number }> {
+    const { data, error } = await supabase.rpc('get_users_access_page', { p_search: input.search || null, p_role: input.role, p_active: input.active, p_office_id: input.officeId, p_station_id: input.stationId, p_page: input.page, p_page_size: input.pageSize });
+    if (error) throw error;
+    const rows = (data ?? []).map((row: Record<string, unknown>): UsersAccessRow => ({ id: String(row.id), full_name: String(row.full_name), employee_code: row.employee_code == null ? null : String(row.employee_code), email: row.email == null ? null : String(row.email), phone: row.phone == null ? null : String(row.phone), role: String(row.role) as AppRole, active: Boolean(row.active), office_names: Array.isArray(row.office_names) ? row.office_names.map(String) : [], station_names: Array.isArray(row.station_names) ? row.station_names.map(String) : [], device_count: Number(row.device_count ?? 0), created_at: String(row.created_at), updated_at: String(row.updated_at) }));
+    return { rows, total: rows.length ? Number((data?.[0] as Record<string, unknown>).total_count) : 0 };
+  },
+  async getUserAccessDetail(id: string): Promise<UsersAccessDetail> {
+    const { data, error } = await supabase.rpc('get_user_access_detail', { p_user_id: id }).single(); if (error) throw error;
+    const row = data as Record<string, unknown>;
+    return { id: String(row.id), full_name: String(row.full_name), employee_code: row.employee_code == null ? null : String(row.employee_code), email: row.email == null ? null : String(row.email), phone: row.phone == null ? null : String(row.phone), role: String(row.role) as AppRole, active: Boolean(row.active), office_names: Array.isArray(row.office_names) ? row.office_names.map(String) : [], station_names: Array.isArray(row.station_names) ? row.station_names.map(String) : [], office_ids: Array.isArray(row.office_ids) ? row.office_ids.map(String) : [], station_ids: Array.isArray(row.station_ids) ? row.station_ids.map(String) : [], device_count: Number(row.device_count ?? 0), created_at: String(row.created_at), updated_at: String(row.updated_at) };
+  },
+  async getUsersAccessScopeOptions(): Promise<UsersAccessScopeOption[]> {
+    const { data, error } = await supabase.rpc('get_users_access_scope_options'); if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({ kind: String(row.kind) as UsersAccessScopeOption['kind'], id: String(row.id), name: String(row.name), code: String(row.code) }));
+  },
+  async manageUserAccess(input: { id: string; fullName: string; employeeCode: string | null; phone: string | null; role: AppRole; active: boolean; officeIds: string[]; stationIds: string[]; reason: string | null }): Promise<void> {
+    const { error } = await supabase.rpc('manage_user_access', { p_user_id: input.id, p_full_name: input.fullName, p_employee_code: input.employeeCode, p_phone: input.phone, p_role: input.role, p_active: input.active, p_office_ids: input.officeIds, p_station_ids: input.stationIds, p_reason: input.reason }); if (error) throw error;
+  },
+  async inviteUser(input: { fullName: string; employeeCode: string | null; email: string; phone: string | null; role: AppRole; officeIds: string[]; stationIds: string[]; reason: string | null }): Promise<void> {
+    const { error } = await supabase.functions.invoke('invite-user', { body: { fullName: input.fullName, employeeCode: input.employeeCode, email: input.email, phone: input.phone, role: input.role, officeIds: input.officeIds, stationIds: input.stationIds, reason: input.reason } }); if (error) throw error;
+  },
+  async getFeederThresholdsPage(input: { search: string; stationId: string | null; feederId: string | null; parameterCode: string | null; feederActive: boolean | null; page: number; pageSize: number }): Promise<{ rows: FeederThresholdRow[]; total: number }> { const { data, error } = await supabase.rpc('get_feeder_thresholds_page', { p_search: input.search || null, p_station_id: input.stationId, p_feeder_id: input.feederId, p_parameter_code: input.parameterCode, p_feeder_active: input.feederActive, p_page: input.page, p_page_size: input.pageSize }); if (error) throw error; const rows = (data ?? []).map((row: Record<string, unknown>): FeederThresholdRow => ({ id: String(row.id), station_id: String(row.station_id), station_name: String(row.station_name), feeder_id: String(row.feeder_id), feeder_name: String(row.feeder_name), parameter_code: String(row.parameter_code), min_value: row.min_value == null ? null : Number(row.min_value), max_value: row.max_value == null ? null : Number(row.max_value), feeder_active: Boolean(row.feeder_active), updated_at: String(row.updated_at), updated_by_name: row.updated_by_name == null ? null : String(row.updated_by_name) })); return { rows, total: rows.length ? Number((data?.[0] as Record<string, unknown>).total_count) : 0 }; },
+  async getThresholdScopeOptions(): Promise<ThresholdScopeOption[]> { const { data, error } = await supabase.rpc('get_threshold_scope_options'); if (error) throw error; return (data ?? []).map((row: Record<string, unknown>) => ({ kind: String(row.kind) as ThresholdScopeOption['kind'], id: String(row.id), name: String(row.name), station_id: String(row.station_id), station_name: String(row.station_name) })); },
+  async saveFeederThreshold(input: { id?: string; feederId: string; parameterCode: string; min: number | null; max: number | null; reason: string | null }): Promise<string> { const { data, error } = await supabase.rpc('save_feeder_threshold', { p_id: input.id ?? null, p_feeder_id: input.feederId, p_parameter_code: input.parameterCode, p_min: input.min, p_max: input.max, p_reason: input.reason }); if (error) throw error; return String(data); },
+  async getGlobalNotificationConfig(): Promise<GlobalNotificationConfig> { const { data, error } = await supabase.rpc('get_global_notification_config').single(); if (error) throw error; const row = data as Record<string, unknown>; return { id: String(row.id), active: Boolean(row.active), max_unit_type: String(row.max_unit_type), updated_at: String(row.updated_at), updated_by_name: row.updated_by_name == null ? null : String(row.updated_by_name) }; },
+  async updateGlobalNotificationConfig(input: { id: string; active: boolean; maxUnitType: string; reason: string }): Promise<void> { const { error } = await supabase.rpc('update_global_notification_config', { p_id: input.id, p_active: input.active, p_max_unit_type: input.maxUnitType, p_reason: input.reason }); if (error) throw error; },
+  async getAdministrationAuditPage(input: { from: string; to: string; action: string | null; entityType: string | null; actorId: string | null; stationId: string | null; orgUnitId: string | null; visibility: string | null; search: string; page: number; pageSize: number }): Promise<{ rows: AdministrationAuditRow[]; total: number }> { const { data, error } = await supabase.rpc('get_administration_audit_page', { p_from: input.from, p_to: input.to, p_action: input.action, p_entity_type: input.entityType, p_actor_id: input.actorId, p_station_id: input.stationId, p_org_unit_id: input.orgUnitId, p_visibility: input.visibility, p_search: input.search || null, p_page: input.page, p_page_size: input.pageSize }); if (error) throw error; const rows = (data ?? []).map((r: Record<string, unknown>): AdministrationAuditRow => ({ id: String(r.id), created_at: String(r.created_at), action: String(r.action), entity_type: String(r.entity_type), entity_id: r.entity_id == null ? null : String(r.entity_id), record_label: String(r.record_label ?? 'Administrative record'), actor_id: r.actor_id == null ? null : String(r.actor_id), actor_name: r.actor_name == null ? null : String(r.actor_name), actor_employee_code: r.actor_employee_code == null ? null : String(r.actor_employee_code), station_id: r.station_id == null ? null : String(r.station_id), station_name: r.station_name == null ? null : String(r.station_name), org_unit_id: r.org_unit_id == null ? null : String(r.org_unit_id), org_unit_name: r.org_unit_name == null ? null : String(r.org_unit_name), visibility: String(r.visibility) as AdministrationAuditRow['visibility'], reason: r.reason == null ? null : String(r.reason), old_values: r.old_values as Record<string, unknown> | null, new_values: r.new_values as Record<string, unknown> | null })); return { rows, total: rows.length ? Number((data?.[0] as Record<string, unknown>).total_count) : 0 }; },
+  async getAdministrationAuditFilterOptions(): Promise<AdministrationAuditFilterOption[]> { const { data, error } = await supabase.rpc('get_administration_audit_filter_options'); if (error) throw error; return (data ?? []).map((r: Record<string, unknown>) => ({ kind: String(r.kind) as AdministrationAuditFilterOption['kind'], id: String(r.id), label: String(r.label) })); },
 
   async getDashboardTodayLoadTrend(
     startIso: string,

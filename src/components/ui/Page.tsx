@@ -32,18 +32,20 @@ export function AppHeader({
   onBack,
   right,
   dark = true,
+  className = '',
 }: {
   title: string;
   subtitle?: string;
   onBack?: () => void;
   right?: ReactNode;
   dark?: boolean;
+  className?: string;
 }) {
   return (
     <header
       className={`sticky top-0 z-20 px-4 py-3 ${
         dark ? 'bg-[#1a3361] text-white' : 'bg-white text-gray-900 border-b border-gray-200'
-      }`}
+      } ${className}`}
     >
       <div className="flex items-center gap-3">
         {onBack && (

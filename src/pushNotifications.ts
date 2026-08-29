@@ -270,18 +270,6 @@ export async function initPushNotifications() {
           '========================================'
         );
 
-        console.log(
-          'PUSH TOKEN START'
-        );
-
-        console.log(
-          token.value
-        );
-
-        console.log(
-          'PUSH TOKEN END'
-        );
-
         // --------------------------------------------------
         // Save token locally
         // --------------------------------------------------
