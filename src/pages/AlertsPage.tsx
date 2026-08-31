@@ -9,7 +9,8 @@ import {
 
 import { api } from "@/services/api";
 import { useApp } from "@/context/AppContext";
-import type { Interruption, OverloadAlert } from "@/types";
+import type { Interruption } from "@/types";
+import type { ParameterAlert } from "@/services/api";
 
 type AlertKind = "critical" | "warning" | "info";
 
@@ -25,6 +26,26 @@ type AlertItem = {
 const FILTERS = ["ALL", "CRITICAL", "WARNING", "INFO"] as const;
 
 type Filter = (typeof FILTERS)[number];
+
+const PARAMETER_LABELS: Record<string, string> = {
+  MW: 'MW',
+  MVAR: 'MVAR',
+  VOLTAGE_KV: 'Voltage',
+  CURRENT_A: 'Current',
+  POWER_FACTOR: 'Power factor',
+  FREQUENCY_HZ: 'Frequency',
+  TRANSFORMER_TEMP_C: 'Transformer temperature',
+  OIL_LEVEL_PERCENT: 'Oil level',
+};
+
+function parameterAlertMessage(alert: ParameterAlert) {
+  const parameter = PARAMETER_LABELS[alert.parameter_code] ?? alert.parameter_code;
+  const limit = alert.breach_type === 'BELOW_MIN' ? alert.min_value : alert.max_value;
+  const direction = alert.breach_type === 'BELOW_MIN' ? 'below minimum' : 'above maximum';
+  const configuredLimit = limit === null ? 'configured limit' : `${direction} limit ${limit}`;
+
+  return `${parameter}: ${alert.actual_value} (${configuredLimit})`;
+}
 
 export function AlertsPage({
   onBack,
@@ -43,31 +64,29 @@ export function AlertsPage({
     setError(null);
 
     try {
-      const [overloads, ints] = await Promise.all([
-        api.getOverloadAlerts(),
+      const [parameterAlerts, ints] = await Promise.all([
+        api.getParameterAlerts(),
         api.getInterruptions(),
       ]);
 
       const built: AlertItem[] = [
-        ...overloads.map((a: OverloadAlert) => ({
-          id: `o-${a.id}`,
+        ...parameterAlerts.map((a) => ({
+          id: `p-${a.id}`,
 
-          kind: (
-            a.value > a.limit_value * 1.1
-              ? "critical"
-              : "warning"
-          ) as AlertKind,
+          // Parameter alerts have no configured severity band. Keep them as
+          // warnings rather than inventing a criticality rule in the client.
+          kind: "warning" as AlertKind,
 
-          title: `Overload: ${a.asset_id}`,
+          title: a.feeder_name ? `Parameter exception: ${a.feeder_name}` : 'Parameter exception',
 
-          message: `${a.parameter} ${a.value} (limit ${a.limit_value})`,
+          message: parameterAlertMessage(a),
 
           station:
             stations.find(
               (s) => s.id === a.station_id
             )?.name ?? "—",
 
-          time: a.alert_time,
+          time: a.triggered_at,
         })),
 
         ...ints.map((i: Interruption) => ({

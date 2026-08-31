@@ -6,8 +6,7 @@ import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 export function StatusBar() {
   const { online, pending } = useOnlineStatus();
   return (
-    <div className="flex items-center justify-between px-4 py-1.5 text-[10px] text-gray-400 bg-white">
-      <span className="font-semibold text-gray-600">9:41</span>
+    <div className="flex justify-end px-4 py-1.5 text-[10px] text-gray-400 bg-white">
       <div className="flex items-center gap-2">
         {pending > 0 && (
           <span className="flex items-center gap-1 text-amber-600">
@@ -20,7 +19,6 @@ export function StatusBar() {
         ) : (
           <WifiOff className="h-3.5 w-3.5 text-amber-500" />
         )}
-        <span>100%</span>
       </div>
     </div>
   );

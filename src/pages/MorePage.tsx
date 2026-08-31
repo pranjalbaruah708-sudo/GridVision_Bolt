@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { LucideIcon } from 'lucide-react';
-import { ChevronRight, ClipboardPenLine, FileCog, GitBranch, HelpCircle, LogOut, Network, Power, Settings, ShieldCheck, SlidersHorizontal, UsersRound, ZapOff } from 'lucide-react';
-import { AppHeader, PageBody, Screen } from '@/components/ui/Page';
+import { ArrowLeft, ChevronRight, ClipboardPenLine, FileCog, GitBranch, HelpCircle, LogOut, Network, Power, Settings, ShieldCheck, SlidersHorizontal, UsersRound, ZapOff } from 'lucide-react';
+import { PageBody } from '@/components/ui/Page';
+import { ExitAppConfirmationDialog } from '@/components/ExitAppConfirmationDialog';
 import { SignOutConfirmationDialog } from '@/components/SignOutConfirmationDialog';
 import { useApp } from '@/context/AppContext';
 import { getRoleLabel, hasCapability, type AppRole, type Capability } from '@/security/permissions';
@@ -46,16 +47,28 @@ function MenuRows({ items, role, onOpen }: { items: MenuItem[]; role: AppRole; o
   })}</div></div>;
 }
 
-export function MorePage({ onOpen, onSwitchModule, fullName, userEmail, avatarUrl, role, onSignOut }: { onOpen: (id: MoreDestination) => void; onSwitchModule: () => void; fullName: string; userEmail: string | null; avatarUrl?: string | null; role: AppRole; onSignOut: () => Promise<void> }) {
+export function MorePage({ onBack, onOpen, onSwitchModule, fullName, userEmail, avatarUrl, role, onSignOut }: { onBack: () => void; onOpen: (id: MoreDestination) => void; onSwitchModule: () => void; fullName: string; userEmail: string | null; avatarUrl?: string | null; role: AppRole; onSignOut: () => Promise<void> }) {
   const { activeStation, stations } = useApp();
+  const [showExitConfirmation, setShowExitConfirmation] = useState(false);
   const [showSignOutConfirmation, setShowSignOutConfirmation] = useState(false);
   const isAndroid = Capacitor.getPlatform() === 'android';
   const operationalItems = useMemo(() => OPERATIONAL_ITEMS.filter((item) => isAllowed(item, role)), [role]);
   const administrationItems = useMemo(() => ADMINISTRATION_ITEMS.filter((item) => isAllowed(item, role)), [role]);
   const scope = role === 'OPERATOR' ? activeStation?.name ?? 'No assigned station' : `${stations.length} accessible station${stations.length === 1 ? '' : 's'}`;
 
-  return <Screen>
-    <AppHeader title="More" subtitle={`${getRoleLabel(role)} workspace`} className="bg-gradient-to-r from-[#0D47A1] to-[#1565C0]" />
+  return <div className="min-h-screen bg-[#f0f2f7]">
+    <header className="rounded-b-[22px] bg-gradient-to-br from-[#0D47A1] to-[#1565C0] px-4 pb-4 pt-[22px] text-white shadow-md">
+      <div className="grid min-h-8 grid-cols-[32px_1fr_32px] items-center">
+        <button type="button" onClick={onBack} className="rounded-full p-1 transition hover:bg-white/10 active:scale-95" aria-label="Back to previous page">
+          <ArrowLeft size={24} />
+        </button>
+        <div className="text-center">
+          <h1 className="m-0 text-2xl font-bold">More</h1>
+          <p className="mt-0.5 text-xs font-medium text-blue-100/90">{getRoleLabel(role)} workspace</p>
+        </div>
+        <span aria-hidden="true" />
+      </div>
+    </header>
     <PageBody>
       <button type="button" onClick={() => onOpen('profile')} className="mb-5 flex min-h-20 w-full items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm transition hover:bg-slate-50 active:bg-slate-100" aria-label="Open My Profile">
         {avatarUrl ? <img src={avatarUrl} alt="Profile" className="h-12 w-12 rounded-full object-cover" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-blue-700 text-sm font-bold text-white">{initialsFor(fullName)}</span>}
@@ -67,10 +80,11 @@ export function MorePage({ onOpen, onSwitchModule, fullName, userEmail, avatarUr
 
       <section className="mb-5"><h2 className="mb-2 px-1 text-xs font-bold tracking-wide text-slate-500">APP &amp; SUPPORT</h2><div className="overflow-hidden rounded-2xl bg-white shadow-sm"><button type="button" onClick={onSwitchModule} className="flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50 active:bg-slate-100"><span className="grid h-10 w-10 place-items-center rounded-xl bg-blue-600"><FileCog className="h-5 w-5 text-white" /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-900">Switch Module</span><span className="mt-0.5 block text-xs text-slate-500">Return to the GridVision module selector</span></span><ChevronRight className="h-4 w-4 text-slate-300" /></button><div className="border-t border-slate-100"><MenuRows items={SUPPORT_ITEMS} role={role} onOpen={onOpen} /></div></div></section>
 
-      {isAndroid && <button type="button" onClick={() => { void CapacitorApp.minimizeApp(); }} className="mb-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50"><Power className="h-4 w-4" />Close App</button>}
-      <button type="button" onClick={() => setShowSignOutConfirmation(true)} className="flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-red-100 bg-white text-sm font-semibold text-red-600 transition hover:bg-red-50"><LogOut className="h-4 w-4" />Sign Out</button>
+      {isAndroid && <button type="button" onClick={() => setShowExitConfirmation(true)} className="mb-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-blue-600 bg-white text-sm font-semibold text-blue-600 transition hover:bg-blue-50"><Power className="h-4 w-4" />Exit App</button>}
+      <button type="button" onClick={() => setShowSignOutConfirmation(true)} className="flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border border-red-600 bg-white text-sm font-semibold text-red-600 transition hover:bg-red-50"><LogOut className="h-4 w-4" />Sign Out</button>
       <p className="mt-6 text-center text-[11px] text-slate-400">GridVision · Secure Operations</p>
+      <ExitAppConfirmationDialog open={showExitConfirmation} onCancel={() => setShowExitConfirmation(false)} onConfirm={() => { setShowExitConfirmation(false); void CapacitorApp.minimizeApp(); }} />
       <SignOutConfirmationDialog open={showSignOutConfirmation} onCancel={() => setShowSignOutConfirmation(false)} onConfirm={onSignOut} />
     </PageBody>
-  </Screen>;
+  </div>;
 }

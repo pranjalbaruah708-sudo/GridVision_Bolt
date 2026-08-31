@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { AppProvider } from '@/context/AppContext';
-import { useRouter } from '@/hooks/useRouter';
+import { useRouter, type Route } from '@/hooks/useRouter';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/services/api';
 import { canAccessRoute, getRoleLabel, type AppRole } from '@/security/permissions';
@@ -39,6 +39,7 @@ import { AuditActivityPage } from '@/pages/AuditActivityPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 
 import { SignInPage } from '@/pages/SignInPage';
+import { SetPasswordPage } from '@/pages/SetPasswordPage';
 import { ModuleSelectionReplicaPage } from '@/pages/ModuleSelectionReplicaPage';
 
 
@@ -56,11 +57,16 @@ const MORE_ROUTE_SHELL_TITLES: Partial<Record<MoreDestination, string>> = {
 function Shell() {
   const { route, go } = useRouter();
   const auth = useAuth();
+  const moreOriginRef = useRef<Route | null>(null);
 
   const [selectedModule, setSelectedModule] =
     useState<'manual' | 'scada' | 'shutdown' | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
   const [roleLoading, setRoleLoading] = useState(false);
+  const [inviteFlowComplete, setInviteFlowComplete] = useState(false);
+  const isInvitationFlow =
+    !inviteFlowComplete &&
+    new URLSearchParams(window.location.search).get('invite') === '1';
 
 
   // ======================================================
@@ -85,6 +91,12 @@ function Shell() {
       setSelectedModule(null);
     }
   }, [auth.session]);
+
+  useEffect(() => {
+    if (route.tab !== 'more') {
+      moreOriginRef.current = route;
+    }
+  }, [route]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +138,14 @@ function Shell() {
 
   const returnToReports = () => go({ tab: 'reports' });
   const returnToMore = () => go({ tab: 'more' });
+  const returnFromMore = () => {
+    if (moreOriginRef.current) {
+      go(moreOriginRef.current);
+      return;
+    }
+
+    returnToModuleSelection();
+  };
 
 
   // ======================================================
@@ -137,6 +157,22 @@ function Shell() {
       <div className="grid min-h-screen place-items-center bg-[#142851]">
         <Loader2 className="h-8 w-8 animate-spin text-blue-300" />
       </div>
+    );
+  }
+
+  // Invitation setup must win over every regular authenticated route. Supabase
+  // places its one-time callback tokens in the URL hash, while this explicit
+  // query flag remains stable until SetPasswordPage completes successfully.
+  if (isInvitationFlow) {
+    return (
+      <SetPasswordPage
+        hasValidSession={Boolean(auth.session && auth.user)}
+        onComplete={() => {
+          setInviteFlowComplete(true);
+          setSelectedModule(null);
+        }}
+        onDismiss={() => setInviteFlowComplete(true)}
+      />
     );
   }
 
@@ -208,7 +244,6 @@ function Shell() {
       </div>
     );
   }
-
 
   // ======================================================
   // SUB PAGES
@@ -578,6 +613,7 @@ function Shell() {
           avatarUrl={auth.user?.user_metadata?.avatar_url ?? null}
           role={role}
           onSignOut={handleSignOut}
+          onBack={returnFromMore}
           onSwitchModule={returnToModuleSelection}
           onOpen={(id) => go({ tab: 'more', sub: id })}
         />

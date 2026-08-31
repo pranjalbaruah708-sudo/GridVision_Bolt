@@ -1,20 +1,6 @@
-import LogoImage from '@/assets/gridvision-logo.png';
+type LogoProps = { size?: number; className?: string; title?: string };
 
-interface LogoProps {
-  size?: number;
-  className?: string;
-}
-
-export function Logo({
-  size = 150,
-  className = '',
-}: LogoProps) {
-  return (
-    <img
-      src={LogoImage}
-      alt="GridVision"
-      width={size}
-      className={className}
-    />
-  );
+export function Logo({ size = 64, className = '', title }: LogoProps) {
+  const labelled = Boolean(title);
+  return <svg width={size} height={size} viewBox="0 0 96 96" fill="none" className={className} role={labelled ? 'img' : undefined} aria-hidden={labelled ? undefined : true} aria-label={title} xmlns="http://www.w3.org/2000/svg">{title && <title>{title}</title>}<defs><linearGradient id="gridvision-logo-gradient" x1="15" y1="12" x2="78" y2="84" gradientUnits="userSpaceOnUse"><stop stopColor="#22D3EE" /><stop offset=".48" stopColor="#2374D9" /><stop offset="1" stopColor="#0B2E63" /></linearGradient></defs><path d="M72 27A31 31 0 1 0 78 58H53V45h25v8a38 38 0 1 1-7-26Z" fill="url(#gridvision-logo-gradient)" /><path d="M29 32 48 21l19 11M29 32v22l19 11 19-11V32M48 21v44M29 43l19 11 19-11" stroke="#0B2E63" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity=".8" /><circle cx="29" cy="32" r="5" fill="#22D3EE" /><circle cx="67" cy="32" r="5" fill="#22D3EE" /><circle cx="48" cy="65" r="5" fill="#22D3EE" /><path d="M36 47c3.1-4.4 7.1-6.6 12-6.6s8.9 2.2 12 6.6c-3.1 4.4-7.1 6.6-12 6.6S39.1 51.4 36 47Z" fill="white" stroke="#0B2E63" strokeWidth="2.5" /><circle cx="48" cy="47" r="3.7" fill="#154C9E" /><circle cx="49.2" cy="45.8" r="1.1" fill="white" /></svg>;
 }

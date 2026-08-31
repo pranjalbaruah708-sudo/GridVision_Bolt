@@ -1,322 +1,281 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
-  User,
-  Lock,
+  AlertCircle,
   Eye,
   EyeOff,
-  Loader2,
-  AlertCircle,
-  ShieldCheck,
   KeyRound,
+  Loader2,
+  Lock,
+  Mail,
+  ShieldCheck,
 } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
 import { Logo } from '@/components/Logo';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/services/supabase';
 
-export function SignInPage({
-  auth,
-}: {
-  auth: ReturnType<typeof useAuth>;
-}) {
+function getFriendlySignInError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+
+  if (/invalid credentials|invalid login|wrong password/i.test(message)) {
+    return 'The email address or password is incorrect.';
+  }
+
+  if (/rate limit|too many requests/i.test(message)) {
+    return 'Too many sign-in attempts. Please try again in a little while.';
+  }
+
+  if (/network|fetch|connection|offline|timeout/i.test(message)) {
+    return 'We could not connect to GridVision. Please check your connection and try again.';
+  }
+
+  return 'We could not sign you in right now. Please try again.';
+}
+
+function getFriendlyRecoveryError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+
+  if (/rate limit|too many requests/i.test(message)) {
+    return 'Too many recovery requests. Please try again in a little while.';
+  }
+
+  if (/network|fetch|connection|offline|timeout/i.test(message)) {
+    return 'We could not send recovery instructions. Please check your connection and try again.';
+  }
+
+  return 'We could not send recovery instructions right now. Please try again.';
+}
+
+export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const { signIn } = auth;
-
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPw, setShowPw] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [sendingRecovery, setSendingRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const isBusy = signingIn || sendingRecovery;
+  const version = import.meta.env.VITE_APP_VERSION as string | undefined;
+
+  const clearError = () => setError(null);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
 
     setError(null);
+    setRecoveryMessage(null);
 
-    if (!username || !password) {
-      setError('Please enter Username and Password.');
+    if (!trimmedEmail || !password) {
+      setError('Enter your email address and password to sign in.');
       return;
     }
 
-    setBusy(true);
-
+    setSigningIn(true);
     try {
-      // Username is actually email for Supabase authentication
-      await signIn(username, password);
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Unable to sign in';
-
-      setError(
-        /invalid credentials|invalid login|wrong password/i.test(msg)
-          ? 'Incorrect Username or Password.'
-          : msg
-      );
+      await signIn(trimmedEmail, password);
+    } catch (signInError) {
+      setError(getFriendlySignInError(signInError));
     } finally {
-      setBusy(false);
+      setSigningIn(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const trimmedEmail = email.trim();
+    setError(null);
+    setRecoveryMessage(null);
+
+    if (!trimmedEmail) {
+      setError('Enter your email address to receive password recovery instructions.');
+      return;
+    }
+
+    setSendingRecovery(true);
+    try {
+      const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(trimmedEmail);
+      if (recoveryError) {
+        throw recoveryError;
+      }
+
+      setRecoveryMessage(
+        'If an account exists for that email address, recovery instructions have been sent.'
+      );
+    } catch (recoveryError) {
+      setError(getFriendlyRecoveryError(recoveryError));
+    } finally {
+      setSendingRecovery(false);
     }
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-[#0B2E63] via-[#154C9E] to-[#0A2147]">
+    <main className="relative min-h-dvh overflow-x-hidden bg-gradient-to-br from-[#08244F] via-[#103F84] to-[#071A38] px-5 py-8 sm:px-6 sm:py-10">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-[0.16]"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgba(191,219,254,0.42) 1px, transparent 1px), linear-gradient(90deg, rgba(191,219,254,0.42) 1px, transparent 1px)',
+          backgroundSize: '32px 32px',
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-12 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-300/20 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -bottom-28 right-[-8rem] h-72 w-72 rounded-full bg-blue-400/15 blur-3xl"
+      />
 
-      {/* Background Effects */}
+      <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-md flex-col justify-center py-3 sm:min-h-[calc(100dvh-5rem)]">
+        <header className="mb-7 text-center sm:mb-8">
+          <div className="mx-auto flex h-[86px] w-[86px] items-center justify-center rounded-[26px] border border-cyan-100/30 bg-white/10 p-3 shadow-[0_18px_45px_rgba(3,24,61,0.34)] backdrop-blur-sm">
+            <Logo size={62} title="GridVision" />
+          </div>
+          <h1 className="mt-4 text-[32px] font-bold tracking-[-0.045em] text-white sm:text-[34px]">
+            Grid<span className="text-cyan-300">Vision</span>
+          </h1>
+          <p className="mt-1.5 text-sm font-medium text-blue-100/90">
+            Unified Grid Operations Platform
+          </p>
+        </header>
 
-      <div className="absolute inset-0">
+        <section
+          aria-label="Sign in"
+          aria-busy={signingIn}
+          className="rounded-[28px] border border-white/65 bg-[#F5F7FA]/95 p-6 shadow-[0_24px_60px_rgba(3,24,61,0.28)] backdrop-blur-xl sm:p-8"
+        >
+          <div className="mb-6">
+            <h2 className="text-[25px] font-bold tracking-[-0.025em] text-slate-900">Sign in</h2>
+            <p className="mt-1.5 text-sm leading-6 text-slate-600">
+              Use your organisation account to continue.
+            </p>
+          </div>
 
-        <div className="absolute -top-32 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-cyan-400/10 blur-3xl"/>
+          {error && (
+            <div
+              id="sign-in-error"
+              role="alert"
+              className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700"
+            >
+              <AlertCircle aria-hidden="true" className="mt-0.5 h-4.5 w-4.5 shrink-0" />
+              <p>{error}</p>
+            </div>
+          )}
 
-        <div className="absolute bottom-0 -left-24 h-80 w-80 rounded-full bg-blue-500/10 blur-3xl"/>
+          {recoveryMessage && (
+            <div
+              role="status"
+              className="mb-5 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm text-emerald-800"
+            >
+              <ShieldCheck aria-hidden="true" className="mt-0.5 h-4.5 w-4.5 shrink-0 text-emerald-600" />
+              <p>{recoveryMessage}</p>
+            </div>
+          )}
 
-        <div className="absolute top-24 -right-20 h-72 w-72 rounded-full bg-sky-500/10 blur-3xl"/>
-
-      </div>
-
-      <div className="relative z-10 w-full max-w-md px-6">
-
-        {/* Logo */}
-
-        <div className="mb-8 flex flex-col items-center text-center">
-
- <div className="flex justify-center">
-<div className="flex h-36 w-36 items-center justify-center rounded-full bg-cyan-400/10 p-2 shadow-2xl backdrop-blur-3xl">
-
- 
-    <Logo size={130} />
- 
- </div>
- 
- </div>
-
-  <h1 className="mt-5 text-3xl font-bold tracking-tight text-white">
-    GridVision
-  </h1>
-
-  <p className="mt-2 text-sm text-blue-100">
-    Unified Digital Platform
-  </p>
-
-  <p className="text-sm text-blue-200/80">
-    for Sub-Station Monitoring & Log Book
-  </p>
-
-</div>
-
-        {/* Login Card */}
-
-        <div className="rounded-3xl border border-white/20 bg-white/95 shadow-2xl backdrop-blur-xl">
-
-          <div className="p-8">
-
-            <div className="mb-6 text-center">
-
-              <h2 className="text-2xl font-bold text-slate-800">
-                Welcome Back
-              </h2>
-
-              <p className="mt-1 text-sm text-slate-500">
-                Sign in to continue
-              </p>
-
+          <form className="space-y-5" onSubmit={handleSubmit} noValidate>
+            <div>
+              <label htmlFor="sign-in-email" className="mb-2 block text-sm font-semibold text-slate-700">
+                Email address
+              </label>
+              <div className="relative">
+                <Mail aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  id="sign-in-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={email}
+                  disabled={isBusy}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    clearError();
+                  }}
+                  placeholder="name@organisation.com"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'sign-in-error' : undefined}
+                  className="min-h-12 w-full rounded-xl border border-slate-200 bg-white py-3 pl-12 pr-4 text-[15px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                />
+              </div>
             </div>
 
-            {error && (
-
-              <div className="mb-5 flex gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
-
-                <AlertCircle className="mt-0.5 h-5 w-5 text-red-500"/>
-
-                <p className="text-sm text-red-700">
-                  {error}
-                </p>
-
-              </div>
-
-            )}
-
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-5"
-            >
-                            {/* Username */}
-
-              <div>
-
-                <label
-                  htmlFor="username"
-                  className="mb-2 block text-sm font-semibold text-slate-700"
-                >
-                  Username
-                </label>
-
-                <div className="relative">
-
-                  <User className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-
-                  <input
-                    id="username"
-                    type="text"
-                    autoComplete="username"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Enter Username"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-12 pr-4 text-sm text-slate-800 outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                  />
-
-                </div>
-
-                <p className="mt-1 text-xs text-slate-400">
-                  Enter your registered username (email address).
-                </p>
-
-              </div>
-
-              {/* Password */}
-
-              <div>
-
-                <label
-                  htmlFor="password"
-                  className="mb-2 block text-sm font-semibold text-slate-700"
-                >
-                  Password
-                </label>
-
-                <div className="relative">
-
-                  <Lock className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-
-                  <input
-                    id="password"
-                    type={showPw ? 'text' : 'password'}
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter Password"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-12 pr-12 text-sm text-slate-800 outline-none transition focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => setShowPw((v) => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 transition hover:text-blue-700"
-                    aria-label={
-                      showPw
-                        ? 'Hide password'
-                        : 'Show password'
-                    }
-                  >
-                    {showPw ? (
-                      <EyeOff className="h-5 w-5" />
-                    ) : (
-                      <Eye className="h-5 w-5" />
-                    )}
-                  </button>
-
-                </div>
-
-              </div>
-
-              {/* Remember Me */}
-
-              <div className="flex items-center justify-between">
-
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
-
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) =>
-                      setRememberMe(e.target.checked)
-                    }
-                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-
-                  Remember Me
-
-                </label>
-
+            <div>
+              <label htmlFor="sign-in-password" className="mb-2 block text-sm font-semibold text-slate-700">
+                Password
+              </label>
+              <div className="relative">
+                <Lock aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  id="sign-in-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={password}
+                  disabled={isBusy}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    clearError();
+                  }}
+                  placeholder="Enter your password"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'sign-in-error' : undefined}
+                  className="min-h-12 w-full rounded-xl border border-slate-200 bg-white py-3 pl-12 pr-12 text-[15px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                />
                 <button
                   type="button"
-                  className="text-sm font-medium text-blue-700 transition hover:text-blue-900"
+                  disabled={isBusy}
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  className="absolute right-2 top-1/2 flex min-h-10 min-w-10 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  Forgot Password?
+                  {showPassword ? <EyeOff aria-hidden="true" className="h-5 w-5" /> : <Eye aria-hidden="true" className="h-5 w-5" />}
                 </button>
-
               </div>
-                            {/* Sign In Button */}
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 to-blue-500 py-3.5 text-sm font-semibold text-white shadow-lg transition hover:from-blue-800 hover:to-blue-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {busy ? (
-                  <>
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    Signing In...
-                  </>
-                ) : (
-                  <>
-                    <KeyRound className="h-5 w-5" />
-                    Sign In
-                  </>
-                )}
-              </button>
-
-            </form>
-
-            {/* Security */}
-
-            <div className="mt-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-
-              <div className="flex items-start gap-3">
-
-                <ShieldCheck className="mt-0.5 h-5 w-5 text-emerald-600" />
-
-                <div>
-
-                  <h3 className="text-sm font-semibold text-emerald-700">
-                    Secure Authentication
-                  </h3>
-
-                  <p className="mt-1 text-xs leading-5 text-emerald-700/80">
-                    User accounts are created and managed by your
-                    organization administrator. Access to different
-                    modules depends on assigned roles and privileges.
-                  </p>
-
-                </div>
-
-              </div>
-
             </div>
 
+            <div className="flex min-h-6 justify-end">
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={handleForgotPassword}
+                className="min-h-10 rounded-lg px-1 text-sm font-semibold text-blue-700 transition hover:text-blue-900 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {sendingRecovery ? 'Sending recovery…' : 'Forgot password?'}
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isBusy}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0B4CA8] to-[#1675D1] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(15,91,190,0.24)] transition hover:from-[#0A4292] hover:to-[#1267B9] focus:outline-none focus:ring-4 focus:ring-blue-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {signingIn ? (
+                <><Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />Signing in…</>
+              ) : (
+                <><KeyRound aria-hidden="true" className="h-5 w-5" />Sign in securely</>
+              )}
+            </button>
+          </form>
+
+          <div className="mt-6 flex items-center justify-center gap-2 border-t border-slate-200 pt-5 text-xs font-medium text-slate-600">
+            <ShieldCheck aria-hidden="true" className="h-4 w-4 text-emerald-600" />
+            <span>Authorised personnel only</span>
           </div>
+        </section>
 
-        </div>
-
-        {/* Footer */}
-
-        <div className="mt-8 text-center">
-
-          <p className="text-xs tracking-wide text-blue-100/90">
-            GridVision
+        <footer className="mt-6 text-center text-xs text-blue-100/90">
+          <div className="flex items-center justify-center gap-2 font-medium">
+            <ShieldCheck aria-hidden="true" className="h-4 w-4 text-emerald-300" />
+            <span>Secure, role-based access for authorised users</span>
+          </div>
+          <p className="mt-3 text-[11px] text-blue-200/75">
+            {version ? 'GridVision · ' + version : 'GridVision · Secure Operations'}
           </p>
-
-          <p className="mt-1 text-[11px] text-blue-200/70">
-            Sub-Station Monitoring & Log Book System
-          </p>
-
-          <p className="mt-4 text-[11px] text-blue-200/50">
-            Version 1.0.0
-          </p>
-
-        </div>
-
+        </footer>
       </div>
-          </div>
+    </main>
   );
 }

@@ -9,3 +9,10 @@ entrypoint = "./functions/send-notification/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/send-notification/*.html" ]
+
+[functions.invite-user]
+enabled = true
+# CORS preflight requests do not include a bearer token. The function validates
+# the caller token itself before any invitation work is performed.
+verify_jwt = false
+entrypoint = "./functions/invite-user/index.ts"

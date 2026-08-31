@@ -60,6 +60,19 @@ export type NotificationDevice = {
   updated_at: string | null;
 };
 
+export type ParameterAlert = {
+  id: string;
+  station_id: string;
+  feeder_id: string;
+  feeder_name: string | null;
+  parameter_code: string;
+  actual_value: number;
+  min_value: number | null;
+  max_value: number | null;
+  breach_type: 'BELOW_MIN' | 'ABOVE_MAX';
+  triggered_at: string;
+};
+
 export type OrgUnitType = { unit_type: string; hierarchy_rank: number };
 export type OrgUnitRow = { id: string; code: string; name: string; unit_type: string; parent_id: string | null; parent_name: string | null; active: boolean; archived_at: string | null; child_count: number; station_count: number };
 export type OrgUnitPage = { rows: OrgUnitRow[]; total: number };
@@ -2612,6 +2625,38 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
 
       `logbook:${stationId}`
     );
+  },
+
+  async getParameterAlerts(
+    stationId?: string
+  ): Promise<ParameterAlert[]> {
+    let query = supabase
+      .from('parameter_alerts')
+      .select('id,station_id,feeder_id,parameter_code,actual_value,min_value,max_value,breach_type,triggered_at,feeders(name)')
+      .order('triggered_at', { ascending: false });
+
+    if (stationId) {
+      query = query.eq('station_id', stationId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return (data ?? []).map((row) => {
+      const feeder = row.feeders as { name?: string | null } | null;
+      return {
+        id: row.id,
+        station_id: row.station_id,
+        feeder_id: row.feeder_id,
+        feeder_name: feeder?.name ?? null,
+        parameter_code: row.parameter_code,
+        actual_value: Number(row.actual_value),
+        min_value: row.min_value === null ? null : Number(row.min_value),
+        max_value: row.max_value === null ? null : Number(row.max_value),
+        breach_type: row.breach_type as 'BELOW_MIN' | 'ABOVE_MAX',
+        triggered_at: row.triggered_at,
+      };
+    });
   },
 
   async getInterruptionReportSummary(
