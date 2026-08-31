@@ -98,7 +98,7 @@ Deno.serve(async (request) => {
       return json({ error: 'Duplicate or invalid user scope' }, 400);
     }
 
-    const inviteRedirectUrl = Deno.env.get('INVITE_REDIRECT_URL');
+    const inviteRedirectUrl = Deno.env.get('INVITE_REDIRECT_URL')?.trim();
     if (!inviteRedirectUrl) {
       return json({ error: 'Invitation delivery is not configured. Please contact an administrator.' }, 500);
     }
