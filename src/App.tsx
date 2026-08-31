@@ -4,6 +4,7 @@ import { AppProvider } from '@/context/AppContext';
 import { useRouter, type Route } from '@/hooks/useRouter';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/services/api';
+import { hasSupabaseInviteCallback } from '@/services/supabase';
 import { canAccessRoute, getRoleLabel, type AppRole } from '@/security/permissions';
 
 import { BottomNav } from '@/components/BottomNav';
@@ -64,9 +65,10 @@ function Shell() {
   const [role, setRole] = useState<AppRole | null>(null);
   const [roleLoading, setRoleLoading] = useState(false);
   const [inviteFlowComplete, setInviteFlowComplete] = useState(false);
-  const isInvitationFlow =
-    !inviteFlowComplete &&
-    new URLSearchParams(window.location.search).get('invite') === '1';
+  const isInvitationFlow = !inviteFlowComplete && (
+    new URLSearchParams(window.location.search).get('invite') === '1' ||
+    hasSupabaseInviteCallback
+  );
 
 
   // ======================================================
