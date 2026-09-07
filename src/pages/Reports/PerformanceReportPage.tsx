@@ -120,8 +120,9 @@ export function PerformanceReportPage({ entity, onBack }: { entity: PerformanceR
     subtitle="Separate operational measures, ranked by one selected metric"
     onBack={onBack}
     contentRef={contentRef}
-    actions={<ReportActions title={title} contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} />}
-    filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: entity === 'FEEDER' && Boolean(filters.stationId), comparisonMetricOptions: METRICS }} generating={resource.loading} onChange={setFilters} onGenerate={generate} />}
+    desktopWide
+    actions={<ReportActions title={title} contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+    filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: entity === 'FEEDER' && Boolean(filters.stationId), comparisonMetricOptions: METRICS }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
   >
     {loadedReport ? <ReportPreview
       meta={{ title, stationScope, feederScope, periodLabel: getReportPeriodLabel(activeFilters), generatedAt: resource.generatedAt ?? new Date(), appliedFilters: [`From ${activeFilters.fromDate}`, `To ${activeFilters.toDate}`, `Ranking: ${metricLabel(loadedReport.metric)}`] }}
@@ -131,6 +132,7 @@ export function PerformanceReportPage({ entity, onBack }: { entity: PerformanceR
       rowKey={(row) => row.entity_id}
       onRetry={generate}
       pagination={{ page: loadedReport.page, pageSize: PAGE_SIZE, totalRows: loadedReport.total, onPageChange: changePage }}
+      desktopTable
     /> : <div className="py-8 text-center text-sm text-slate-500">Select the scope and period, then generate the report.</div>}
     {loadedReport && <RankingSection metric={loadedReport.metric} rows={ranking} />}
   </ReportPageShell>;

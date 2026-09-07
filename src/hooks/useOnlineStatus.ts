@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { queueLength as queueLen } from '@/services/offline';
+import { useCallback, useEffect, useState } from 'react';
+import { OFFLINE_QUEUE_CHANGED_EVENT, queueLength as queueLen } from '@/services/offline';
 import { flushQueue } from '@/services/api';
+import { supabase } from '@/services/supabase';
 
 // Tracks online/offline state and flushes the pending sync queue when
 // connectivity returns.
@@ -9,41 +10,52 @@ export function useOnlineStatus() {
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
   const [pending, setPending] = useState(0);
+  const [queueError, setQueueError] = useState<string | null>(null);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
-    const refreshQueue = () => setPending(queueLen());
+    const refreshQueue = async () => {
+      const { data } = await supabase.auth.getSession();
+      try {
+        setPending(data.session ? await queueLen(data.session.user.id) : 0);
+        setQueueError(null);
+      } catch (cause) {
+        setQueueError(cause instanceof Error ? cause.message : 'Offline operational storage is unavailable.');
+      }
+    };
 
     const onOnline = () => {
       update();
-      refreshQueue();
-      void flushQueue().then(() => refreshQueue());
+      void refreshQueue();
     };
     const onOffline = () => {
       update();
-      refreshQueue();
+      void refreshQueue();
     };
 
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
-    refreshQueue();
+    const onQueueChanged = () => { void refreshQueue(); };
+    window.addEventListener(OFFLINE_QUEUE_CHANGED_EVENT, onQueueChanged);
+    void refreshQueue();
 
-    // also try flushing on mount in case queue accumulated while closed
-    if (navigator.onLine) {
-      void flushQueue().then(() => refreshQueue());
-    }
+    // Queue replay is started by App only after online identity and scope
+    // revalidation complete. This prevents stale authorization on reconnect.
 
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
+      window.removeEventListener(OFFLINE_QUEUE_CHANGED_EVENT, onQueueChanged);
     };
   }, []);
 
-  const flush = async () => {
+  const flush = useCallback(async () => {
     const result = await flushQueue();
-    setPending(queueLen());
+    const { data } = await supabase.auth.getSession();
+    setPending(data.session ? await queueLen(data.session.user.id) : 0);
+    setQueueError(null);
     return result;
-  };
+  }, []);
 
-  return { online, pending, flush };
+  return { online, pending, queueError, flush };
 }

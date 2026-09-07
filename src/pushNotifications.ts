@@ -9,8 +9,6 @@ let authListenerStarted = false;
 // --------------------------------------------------
 
 async function saveFcmTokenToSupabase(token: string) {
-  console.log('🔄 Claiming FCM token for current user...');
-
   try {
     // --------------------------------------------------
     // Get currently authenticated Supabase user
@@ -33,27 +31,15 @@ async function saveFcmTokenToSupabase(token: string) {
     }
 
     if (!user) {
-      console.log(
-        '⏳ No authenticated user yet. Token will be saved after login.'
-      );
-
       pendingFcmToken = token;
       return;
     }
-
-    console.log(
-      '👤 Authenticated user:',
-      user.id
-    );
 
     // --------------------------------------------------
     // Claim token through secure database function
     // --------------------------------------------------
 
-    const {
-      data,
-      error,
-    } = await supabase.rpc(
+    const { error } = await supabase.rpc(
       'claim_device_token',
       {
         p_fcm_token: token,
@@ -71,11 +57,6 @@ async function saveFcmTokenToSupabase(token: string) {
       pendingFcmToken = token;
       return;
     }
-
-    console.log(
-      '✅ FCM token successfully associated with current user:',
-      data
-    );
 
     // Token has successfully been associated
     pendingFcmToken = null;
@@ -97,25 +78,13 @@ async function saveFcmTokenToSupabase(token: string) {
 function startAuthListener() {
   // Prevent duplicate listeners
   if (authListenerStarted) {
-    console.log(
-      'ℹ️ Push authentication listener already started'
-    );
     return;
   }
 
   authListenerStarted = true;
 
-  console.log(
-    '🔐 Starting push notification authentication listener...'
-  );
-
   supabase.auth.onAuthStateChange(
     async (event, session) => {
-
-      console.log(
-        '🔐 Push notification auth event:',
-        event
-      );
 
       // --------------------------------------------------
       // User has successfully logged in
@@ -125,16 +94,6 @@ function startAuthListener() {
         event === 'SIGNED_IN' &&
         session?.user
       ) {
-        console.log(
-          '👤 User authenticated:',
-          session.user.email
-        );
-
-        console.log(
-          '🆔 Authenticated user ID:',
-          session.user.id
-        );
-
         // --------------------------------------------------
         // Find existing FCM token
         // --------------------------------------------------
@@ -148,20 +107,7 @@ function startAuthListener() {
         }
 
         if (token) {
-          console.log(
-            '📱 FCM token available after login'
-          );
-
-          console.log(
-            '🔄 Associating FCM token with newly logged-in user...'
-          );
-
           await saveFcmTokenToSupabase(token);
-
-        } else {
-          console.log(
-            '⚠️ No FCM token available after login'
-          );
         }
       }
 
@@ -170,10 +116,6 @@ function startAuthListener() {
       // --------------------------------------------------
 
       if (event === 'SIGNED_OUT') {
-        console.log(
-          '🚪 User signed out'
-        );
-
         /*
          * IMPORTANT:
          *
@@ -196,17 +138,10 @@ export async function deactivateCurrentDeviceToken() {
   );
 
   if (!token) {
-    console.log(
-      'ℹ️ No FCM token found. Nothing to deactivate.'
-    );
     return;
   }
 
-  console.log(
-    '🚪 Deactivating FCM token before logout...'
-  );
-
-  const { data, error } = await supabase.rpc(
+  const { error } = await supabase.rpc(
     'deactivate_current_device_token',
     {
       p_fcm_token: token,
@@ -222,10 +157,6 @@ export async function deactivateCurrentDeviceToken() {
     throw error;
   }
 
-  console.log(
-    '✅ Current device token deactivated:',
-    data
-  );
 }
 
 // --------------------------------------------------
@@ -233,11 +164,6 @@ export async function deactivateCurrentDeviceToken() {
 // --------------------------------------------------
 
 export async function initPushNotifications() {
-
-  console.log(
-    '🔔 Starting push notification initialization...'
-  );
-
   try {
 
     // --------------------------------------------------
@@ -257,19 +183,6 @@ export async function initPushNotifications() {
     await PushNotifications.addListener(
       'registration',
       async (token) => {
-
-        console.log(
-          '========================================'
-        );
-
-        console.log(
-          '🎉 PUSH NOTIFICATION TOKEN RECEIVED'
-        );
-
-        console.log(
-          '========================================'
-        );
-
         // --------------------------------------------------
         // Save token locally
         // --------------------------------------------------
@@ -343,24 +256,7 @@ export async function initPushNotifications() {
 
     await PushNotifications.addListener(
       'pushNotificationReceived',
-      (notification) => {
-
-        console.log(
-          '========================================'
-        );
-
-        console.log(
-          '🔔 PUSH NOTIFICATION RECEIVED'
-        );
-
-        console.log(
-          notification
-        );
-
-        console.log(
-          '========================================'
-        );
-      }
+      () => undefined
     );
 
     // --------------------------------------------------
@@ -369,28 +265,7 @@ export async function initPushNotifications() {
 
     await PushNotifications.addListener(
       'pushNotificationActionPerformed',
-      (notification) => {
-
-        console.log(
-          '========================================'
-        );
-
-        console.log(
-          '👆 PUSH NOTIFICATION TAPPED'
-        );
-
-        console.log(
-          notification
-        );
-
-        console.log(
-          '========================================'
-        );
-      }
-    );
-
-    console.log(
-      '✅ Push notification listeners registered'
+      () => undefined
     );
 
     // --------------------------------------------------
@@ -399,11 +274,6 @@ export async function initPushNotifications() {
 
     let permissionStatus =
       await PushNotifications.checkPermissions();
-
-    console.log(
-      '📱 Push notification permission:',
-      permissionStatus.receive
-    );
 
     // --------------------------------------------------
     // 4. REQUEST PERMISSION IF NECESSARY
@@ -416,10 +286,6 @@ export async function initPushNotifications() {
       permissionStatus =
         await PushNotifications.requestPermissions();
 
-      console.log(
-        '📱 Permission after request:',
-        permissionStatus.receive
-      );
     }
 
     // --------------------------------------------------
@@ -441,15 +307,7 @@ export async function initPushNotifications() {
     // 5. REGISTER WITH FCM
     // --------------------------------------------------
 
-    console.log(
-      '🚀 Calling PushNotifications.register()...'
-    );
-
     await PushNotifications.register();
-
-    console.log(
-      '✅ PushNotifications.register() completed'
-    );
 
   } catch (error) {
 

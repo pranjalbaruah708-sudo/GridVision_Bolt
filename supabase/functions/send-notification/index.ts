@@ -11,6 +11,19 @@ interface NotificationRequest {
   user_id: string;
   title: string;
   body: string;
+  notification_class?: "LIVE" | "DELAYED_SYNC" | "HISTORICAL_SYNC";
+  event_time?: string;
+  source_recorded_at?: string;
+  source_synced_at?: string;
+  station_id?: string;
+  feeder_id?: string;
+  message?: string;
+}
+
+function presentationTitle(title: string, notificationClass?: NotificationRequest["notification_class"]): string {
+  if (notificationClass === "DELAYED_SYNC" && !title.startsWith("Delayed Sync ·")) return `Delayed Sync · ${title}`;
+  if (notificationClass === "HISTORICAL_SYNC" && !title.startsWith("Historical Sync ·")) return `Historical Sync · ${title}`;
+  return title;
 }
 
 function base64UrlEncode(data: Uint8Array): string {
@@ -172,7 +185,16 @@ Deno.serve(async (req) => {
       user_id,
       title,
       body,
+      notification_class,
+      event_time,
+      source_recorded_at,
+      source_synced_at,
+      station_id,
+      feeder_id,
+      message,
     }: NotificationRequest = await req.json();
+
+    const displayTitle = presentationTitle(title, notification_class);
 
     if (!user_id) {
       return new Response(
@@ -292,7 +314,7 @@ Deno.serve(async (req) => {
                 token: device.fcm_token,
 
                 notification: {
-                  title,
+                  title: displayTitle,
                   body,
                 },
 
@@ -306,8 +328,15 @@ Deno.serve(async (req) => {
                 },
 
                 data: {
-                  title,
+                  title: displayTitle,
                   body,
+                  ...(notification_class ? { notification_class } : {}),
+                  ...(event_time ? { event_time } : {}),
+                  ...(source_recorded_at ? { source_recorded_at } : {}),
+                  ...(source_synced_at ? { source_synced_at } : {}),
+                  ...(station_id ? { station_id } : {}),
+                  ...(feeder_id ? { feeder_id } : {}),
+                  ...(message ? { message } : {}),
                 },
               },
             }),

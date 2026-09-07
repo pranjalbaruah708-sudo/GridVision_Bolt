@@ -118,21 +118,21 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
   }, [loadReport, loadedReport, resource.loading]);
 
   const columns = useMemo<ReportColumn<LogBookEntry>[]>(() => [
-    { id: 'time', label: 'Time (IST)', value: (row) => formatIst(row.actual_event_time), csvValue: (row) => formatIst(row.actual_event_time) },
-    { id: 'station', label: 'Station', value: (row) => stationById.get(row.station_id)?.name ?? 'Not recorded', csvValue: (row) => stationById.get(row.station_id)?.name ?? '' },
-    { id: 'feeder', label: 'Feeder', value: (row) => row.feeder_id ? feederById.get(row.feeder_id)?.name ?? 'Not recorded' : 'Not recorded', csvValue: (row) => row.feeder_id ? feederById.get(row.feeder_id)?.name ?? '' : '' },
-    { id: 'mw', label: 'MW', align: 'right', value: (row) => valueText(row.mw, 2), csvValue: (row) => row.mw },
-    { id: 'mvar', label: 'MVAR', align: 'right', value: (row) => valueText(row.mvar, 2), csvValue: (row) => row.mvar },
-    { id: 'voltage', label: 'Voltage (kV)', align: 'right', value: (row) => valueText(row.voltage_kv, 2), csvValue: (row) => row.voltage_kv },
-    { id: 'current', label: 'Current (A)', align: 'right', value: (row) => valueText(row.current_a, 2), csvValue: (row) => row.current_a },
-    { id: 'pf', label: 'PF', align: 'right', value: (row) => valueText(row.power_factor, 3), csvValue: (row) => row.power_factor },
-    { id: 'frequency', label: 'Frequency (Hz)', align: 'right', value: (row) => valueText(row.frequency_hz, 2), csvValue: (row) => row.frequency_hz },
-    { id: 'temperature', label: 'Transformer temp. (°C)', align: 'right', value: (row) => valueText(row.transformer_temp_c, 1), csvValue: (row) => row.transformer_temp_c },
-    { id: 'oil', label: 'Oil level (%)', align: 'right', value: (row) => valueText(row.oil_level_percent, 1), csvValue: (row) => row.oil_level_percent },
-    { id: 'tap', label: 'Tap position', align: 'right', value: (row) => valueText(row.tap_position), csvValue: (row) => row.tap_position },
-    { id: 'weather', label: 'Weather', value: (row) => valueText(row.weather), csvValue: (row) => row.weather },
-    { id: 'remarks', label: 'Remarks', value: (row) => valueText(row.remarks), csvValue: (row) => row.remarks },
-    { id: 'operator', label: 'Operator', value: (row) => valueText(row.operator_id), csvValue: (row) => row.operator_id },
+    { id: 'time', label: 'Time (IST)', className: 'lg:w-44 lg:whitespace-nowrap', value: (row) => formatIst(row.actual_event_time), csvValue: (row) => formatIst(row.actual_event_time) },
+    { id: 'station', label: 'Station', className: 'lg:min-w-40 lg:whitespace-nowrap', value: (row) => stationById.get(row.station_id)?.name ?? 'Not recorded', csvValue: (row) => stationById.get(row.station_id)?.name ?? '' },
+    { id: 'feeder', label: 'Feeder', className: 'lg:min-w-40 lg:whitespace-nowrap', value: (row) => row.feeder_id ? feederById.get(row.feeder_id)?.name ?? 'Not recorded' : 'Not recorded', csvValue: (row) => row.feeder_id ? feederById.get(row.feeder_id)?.name ?? '' : '' },
+    { id: 'mw', label: 'MW', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.mw, 2), csvValue: (row) => row.mw },
+    { id: 'mvar', label: 'MVAR', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.mvar, 2), csvValue: (row) => row.mvar },
+    { id: 'voltage', label: 'Voltage (kV)', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.voltage_kv, 2), csvValue: (row) => row.voltage_kv },
+    { id: 'current', label: 'Current (A)', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.current_a, 2), csvValue: (row) => row.current_a },
+    { id: 'pf', label: 'PF', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.power_factor, 3), csvValue: (row) => row.power_factor },
+    { id: 'frequency', label: 'Frequency (Hz)', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.frequency_hz, 2), csvValue: (row) => row.frequency_hz },
+    { id: 'temperature', label: 'Transformer temp. (°C)', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.transformer_temp_c, 1), csvValue: (row) => row.transformer_temp_c },
+    { id: 'oil', label: 'Oil level (%)', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.oil_level_percent, 1), csvValue: (row) => row.oil_level_percent },
+    { id: 'tap', label: 'Tap position', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.tap_position), csvValue: (row) => row.tap_position },
+    { id: 'weather', label: 'Weather', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.weather), csvValue: (row) => row.weather },
+    { id: 'remarks', label: 'Remarks', className: 'lg:min-w-64 lg:max-w-80 lg:whitespace-normal', value: (row) => valueText(row.remarks), csvValue: (row) => row.remarks },
+    { id: 'operator', label: 'Operator', className: 'lg:min-w-36 lg:whitespace-nowrap', value: (row) => valueText(row.operator_id), csvValue: (row) => row.operator_id },
   ], [feederById, stationById]);
 
   const summaryCards = useMemo<ReportSummaryCard[]>(() => {
@@ -156,8 +156,9 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
       subtitle="Generate a scoped operational reading report"
       onBack={onBack}
       contentRef={contentRef}
-      actions={<ReportActions title="Daily Log Book Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} />}
-      filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: true }} generating={resource.loading} onChange={setFilters} onGenerate={generate} />}
+      desktopWide
+      actions={<ReportActions title="Daily Log Book Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+      filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: true }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
     >
       {loadedReport ? (
         <ReportPreview
@@ -175,6 +176,7 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
           rowKey={(row) => row.id}
           onRetry={generate}
           pagination={{ page: loadedReport.page, pageSize: PAGE_SIZE, totalRows: loadedReport.total, onPageChange: changePage }}
+          desktopTable
         />
       ) : (
         <div className="py-8 text-center text-sm text-slate-500">Select the scope and date, then generate the report.</div>

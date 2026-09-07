@@ -127,8 +127,9 @@ export function DataCompletenessReportPage({ onBack }: { onBack: () => void }) {
       subtitle="Review expected feeder-hours and reporting gaps"
       onBack={onBack}
       contentRef={contentRef}
-      actions={<ReportActions title="Data Completeness Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} />}
-      filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: Boolean(filters.stationId), thresholdApplicable: true }} generating={resource.loading} onChange={setFilters} onGenerate={generate} />}
+      desktopWide
+      actions={<ReportActions title="Data Completeness Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+      filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: Boolean(filters.stationId), thresholdApplicable: true }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
     >
       {loadedReport ? <ReportPreview
         meta={{ title: 'Data Completeness Report', stationScope, feederScope, periodLabel: getReportPeriodLabel(activeFilters), generatedAt: resource.generatedAt ?? new Date(), appliedFilters: [

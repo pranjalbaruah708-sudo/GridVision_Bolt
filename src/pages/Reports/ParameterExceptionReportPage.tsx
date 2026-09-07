@@ -118,8 +118,9 @@ export function ParameterExceptionReportPage({ onBack }: { onBack: () => void })
     subtitle="Configured feeder-threshold exceptions"
     onBack={onBack}
     contentRef={contentRef}
-    actions={<ReportActions title="Parameter Exception Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} />}
-    filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: Boolean(filters.stationId), parameterOptions: parameters.map((parameter) => ({ value: parameter, label: parameterLabel(parameter) })) }} generating={resource.loading} onChange={setFilters} onGenerate={generate} />}
+    desktopWide
+    actions={<ReportActions title="Parameter Exception Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+    filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: Boolean(filters.stationId), parameterOptions: parameters.map((parameter) => ({ value: parameter, label: parameterLabel(parameter) })) }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
   >
     {loadedReport ? <ReportPreview
       meta={{ title: 'Parameter Exception Report', stationScope, feederScope, periodLabel: getReportPeriodLabel(activeFilters), generatedAt: resource.generatedAt ?? new Date(), appliedFilters: [`From ${activeFilters.fromDate}`, `To ${activeFilters.toDate}`, `Parameter: ${activeFilters.parameter ? parameterLabel(activeFilters.parameter) : 'All configured'}`] }}
@@ -129,6 +130,7 @@ export function ParameterExceptionReportPage({ onBack }: { onBack: () => void })
       rowKey={(row) => row.id}
       onRetry={generate}
       pagination={{ page: loadedReport.page, pageSize: PAGE_SIZE, totalRows: loadedReport.total, onPageChange: changePage }}
+      desktopTable
     /> : <div className="py-8 text-center text-sm text-slate-500">Select the scope and period, then generate the report.</div>}
 
     {loadedReport && <section className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><div className="flex gap-2"><AlertTriangle className="h-4 w-4 shrink-0" /><p><strong>Severity is not configured.</strong> This report shows the configured breach direction and deviation from the feeder-specific threshold. Current rows in <code>parameter_alerts</code> are shown as Active.</p></div></section>}

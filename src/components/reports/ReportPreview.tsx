@@ -33,6 +33,7 @@ type ReportPreviewProps<Row> = {
     totalRows: number;
     onPageChange: (page: number) => void;
   };
+  desktopTable?: boolean;
 };
 
 export function ReportPreview<Row>({
@@ -44,6 +45,7 @@ export function ReportPreview<Row>({
   onRetry,
   pageSize,
   pagination,
+  desktopTable = false,
 }: ReportPreviewProps<Row>) {
   const hasRows = resource.rows.length > 0;
 
@@ -55,7 +57,7 @@ export function ReportPreview<Row>({
       <ReportSummaryCards cards={summaryCards} />
       {resource.error && <div className="flex items-center justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"><span>Could not refresh. Showing the last valid report.</span>{onRetry && <button type="button" onClick={onRetry} className="shrink-0 underline">Retry</button>}</div>}
       {hasRows
-        ? <ReportTable rows={resource.rows} columns={columns} rowKey={rowKey} pageSize={pageSize} pagination={pagination} />
+        ? <ReportTable rows={resource.rows} columns={columns} rowKey={rowKey} pageSize={pageSize} pagination={pagination} desktop={desktopTable} />
         : <ReportEmptyState />}
     </div>
   );

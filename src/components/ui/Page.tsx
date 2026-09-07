@@ -30,6 +30,7 @@ export function AppHeader({
   onBack,
   right,
   dark = true,
+  prominent = false,
   className = '',
 }: {
   title: string;
@@ -37,49 +38,50 @@ export function AppHeader({
   onBack?: () => void;
   right?: ReactNode;
   dark?: boolean;
+  prominent?: boolean;
   className?: string;
 }) {
   return (
     <header
-      className={`sticky top-0 z-20 px-4 py-3 ${
+      className={`sticky top-0 z-20 px-4 ${prominent ? 'pb-4 pt-[22px]' : 'py-3'} ${
         dark ? 'bg-[#1a3361] text-white' : 'bg-white text-gray-900 border-b border-gray-200'
       } ${className}`}
     >
-      <div className="flex items-center gap-3">
+      <div className={`items-center gap-3 ${prominent ? 'grid grid-cols-[32px_minmax(0,1fr)_32px]' : 'flex'}`}>
         {onBack && (
           <button
             onClick={onBack}
             className={`grid h-8 w-8 place-items-center rounded-full transition active:scale-95 ${
-              dark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+              dark ? `${prominent ? '' : 'bg-white/10'} hover:bg-white/20 text-white` : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
             }`}
             aria-label="Back"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className={prominent ? 'h-6 w-6' : 'h-4 w-4'} />
           </button>
         )}
-        <div className="min-w-0 flex-1">
-          <h1 className="text-base font-bold leading-tight truncate">{title}</h1>
+        <div className={`min-w-0 ${prominent ? 'text-center' : 'flex-1'}`}>
+          <h1 className={`${prominent ? 'text-xl' : 'text-base'} font-bold leading-tight truncate`}>{title}</h1>
           {subtitle && (
             <p className={`text-[11px] truncate ${dark ? 'text-blue-100/80' : 'text-gray-500'}`}>
               {subtitle}
             </p>
           )}
         </div>
-        {right}
+        {right ?? (prominent ? <span aria-hidden="true" /> : null)}
       </div>
     </header>
   );
 }
 
-export function Screen({ children, dark = false }: { children: ReactNode; dark?: boolean }) {
+export function Screen({ children, dark = false, showStatusBar = true }: { children: ReactNode; dark?: boolean; showStatusBar?: boolean }) {
   return (
     <div className={`min-h-screen ${dark ? 'bg-[#1a3361]' : 'bg-[#f0f2f7]'}`}>
-      <StatusBar />
+      {showStatusBar && <StatusBar />}
       {children}
     </div>
   );
 }
 
-export function PageBody({ children }: { children: ReactNode }) {
-  return <div className="mx-auto w-full max-w-md px-4 py-4 pb-28">{children}</div>;
+export function PageBody({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <div className={`mx-auto w-full max-w-md px-4 py-4 pb-28 ${className}`}>{children}</div>;
 }

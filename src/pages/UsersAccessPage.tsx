@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Loader2, Search, ShieldAlert, UserPlus } from 'lucide-react';
+import { ChevronRight, Loader2, Mail, Search, ShieldAlert, UserPlus } from 'lucide-react';
+
 import { AdminPageShell, DetailDrawer, EmptyState, ErrorState, LoadingSkeleton, PaginationControls, ReadOnlyBanner, StatusBadge } from '@/components/admin/AdminFramework';
 import { api, type UsersAccessDetail, type UsersAccessRow, type UsersAccessScopeOption } from '@/services/api';
 import { getRoleLabel, hasCapability, type AppRole } from '@/security/permissions';
@@ -12,33 +13,186 @@ const fromDetail = (detail: UsersAccessDetail): UserForm => ({ fullName: detail.
 export function UsersAccessPage({ role, onBack }: { role: AppRole; onBack: () => void }) {
   const readOnly = !hasCapability(role, 'manage_users');
   const canManageSuper = hasCapability(role, 'grant_or_revoke_super_admin');
-  const [rows, setRows] = useState<UsersAccessRow[]>([]); const [total, setTotal] = useState(0);
-  const [searchInput, setSearchInput] = useState(''); const [search, setSearch] = useState(''); const [roleFilter, setRoleFilter] = useState<AppRole | ''>(''); const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active'); const [scopeId, setScopeId] = useState(''); const [page, setPage] = useState(0);
-  const [options, setOptions] = useState<UsersAccessScopeOption[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const requestRef = useRef(0);
-  const [drawer, setDrawer] = useState(false); const [detail, setDetail] = useState<UsersAccessDetail | null>(null); const [editing, setEditing] = useState(false); const [inviting, setInviting] = useState(false); const [form, setForm] = useState<UserForm>(emptyForm); const [formError, setFormError] = useState<string | null>(null); const [saving, setSaving] = useState(false); const [confirm, setConfirm] = useState(false);
-  const offices = useMemo(() => options.filter((option) => option.kind === 'OFFICE'), [options]); const stations = useMemo(() => options.filter((option) => option.kind === 'STATION'), [options]);
-  const load = useCallback(async () => { const request = ++requestRef.current; setLoading(true); setError(null); try { const result = await api.getUsersAccessPage({ search, role: roleFilter || null, active: activeFilter === 'all' ? null : activeFilter === 'active', officeId: scopeId && offices.some((office) => office.id === scopeId) ? scopeId : null, stationId: scopeId && stations.some((station) => station.id === scopeId) ? scopeId : null, page, pageSize: 20 }); if (request === requestRef.current) { setRows(result.rows); setTotal(result.total); } } catch (cause) { if (request === requestRef.current) setError(cause instanceof Error ? cause.message : 'Could not load users.'); } finally { if (request === requestRef.current) setLoading(false); } }, [activeFilter, offices, page, roleFilter, scopeId, search, stations]);
-  useEffect(() => { const timer = window.setTimeout(() => { setPage(0); setSearch(searchInput.trim()); }, 300); return () => window.clearTimeout(timer); }, [searchInput]);
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => { api.getUsersAccessScopeOptions().then(setOptions).catch(() => setOptions([])); }, []);
-  const open = async (row: UsersAccessRow) => { setDrawer(true); setDetail(null); setEditing(false); setInviting(false); setFormError(null); try { const next = await api.getUserAccessDetail(row.id); setDetail(next); setForm(fromDetail(next)); } catch (cause) { setFormError(cause instanceof Error ? cause.message : 'Could not load user details.'); } };
-  const add = () => { setDetail(null); setForm(emptyForm()); setFormError(null); setInviting(true); setEditing(true); setDrawer(true); };
+  const [rows, setRows] = useState<UsersAccessRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState<AppRole | ''>('');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active');
+  const [scopeId, setScopeId] = useState('');
+  const [page, setPage] = useState(0);
+  const [options, setOptions] = useState<UsersAccessScopeOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
+  const [drawer, setDrawer] = useState(false);
+  const [detail, setDetail] = useState<UsersAccessDetail | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [form, setForm] = useState<UserForm>(emptyForm);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [resendConfirm, setResendConfirm] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendNotice, setResendNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+
+  const offices = useMemo(() => options.filter((option) => option.kind === 'OFFICE'), [options]);
+  const stations = useMemo(() => options.filter((option) => option.kind === 'STATION'), [options]);
   const allowedRoles = ROLES.filter((item) => item !== 'SUPER_ADMIN' || canManageSuper);
   const targetProtected = detail?.role === 'SUPER_ADMIN' && !canManageSuper;
+  const canResendSetupEmail = Boolean(detail && !readOnly && !targetProtected && detail.active);
+
+  const load = useCallback(async () => {
+    const request = ++requestRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getUsersAccessPage({
+        search,
+        role: roleFilter || null,
+        active: activeFilter === 'all' ? null : activeFilter === 'active',
+        officeId: scopeId && offices.some((office) => office.id === scopeId) ? scopeId : null,
+        stationId: scopeId && stations.some((station) => station.id === scopeId) ? scopeId : null,
+        page,
+        pageSize: 20,
+      });
+      if (request === requestRef.current) {
+        setRows(result.rows);
+        setTotal(result.total);
+      }
+    } catch (cause) {
+      if (request === requestRef.current) setError(cause instanceof Error ? cause.message : 'Could not load users.');
+    } finally {
+      if (request === requestRef.current) setLoading(false);
+    }
+  }, [activeFilter, offices, page, roleFilter, scopeId, search, stations]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setPage(0);
+      setSearch(searchInput.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { api.getUsersAccessScopeOptions().then(setOptions).catch(() => setOptions([])); }, []);
+
+  const open = async (row: UsersAccessRow) => {
+    setDrawer(true);
+    setDetail(null);
+    setEditing(false);
+    setInviting(false);
+    setFormError(null);
+    setResendNotice(null);
+    setResendConfirm(false);
+    try {
+      const next = await api.getUserAccessDetail(row.id);
+      setDetail(next);
+      setForm(fromDetail(next));
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : 'Could not load user details.');
+    }
+  };
+
+  const add = () => {
+    setDetail(null);
+    setForm(emptyForm());
+    setFormError(null);
+    setResendNotice(null);
+    setResendConfirm(false);
+    setInviting(true);
+    setEditing(true);
+    setDrawer(true);
+  };
+
   const toggle = (key: 'officeIds' | 'stationIds', id: string) => setForm((current) => ({ ...current, [key]: current[key].includes(id) ? current[key].filter((value) => value !== id) : [...current[key], id] }));
-  const validate = () => { if (!form.fullName.trim()) return 'Full name is required.'; if (inviting && !/^\S+@\S+\.\S+$/.test(form.email.trim())) return 'Enter a valid email address.'; if (!allowedRoles.includes(form.role)) return 'That role is not permitted for your account.'; if (!inviting && !form.reason.trim() && (form.role !== detail?.role || form.active !== detail?.active || form.officeIds.join() !== detail?.office_ids.join() || form.stationIds.join() !== detail?.station_ids.join())) return 'Provide a reason for role, status, or assignment changes.'; return null; };
-  const save = async () => { const validation = validate(); if (validation) { setFormError(validation); return; } setSaving(true); setFormError(null); try { if (inviting) await api.inviteUser({ fullName: form.fullName.trim(), employeeCode: form.employeeCode.trim() || null, email: form.email.trim(), phone: form.phone.trim() || null, role: form.role, officeIds: form.officeIds, stationIds: form.stationIds, reason: form.reason.trim() || null }); else if (detail) await api.manageUserAccess({ id: detail.id, fullName: form.fullName.trim(), employeeCode: form.employeeCode.trim() || null, phone: form.phone.trim() || null, role: form.role, active: form.active, officeIds: form.officeIds, stationIds: form.stationIds, reason: form.reason.trim() || null }); setConfirm(false); setDrawer(false); await load(); } catch (cause) { setFormError(cause instanceof Error ? cause.message : 'Could not save user access.'); } finally { setSaving(false); } };
-  return <AdminPageShell title="Users & Access" subtitle="Manage users, roles and assignments" onBack={onBack}>
-    {readOnly && <ReadOnlyBanner>Read only — your directory is restricted to users sharing your assigned office or station.</ReadOnlyBanner>}
-    <section className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{[['Total', total], ['Active', rows.filter((row) => row.active).length], ['Officers', rows.filter((row) => row.role === 'FIELD_OFFICER').length], ['Operators', rows.filter((row) => row.role === 'OPERATOR').length]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-white p-3 shadow-sm"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-xl font-bold text-blue-800">{value}</p></div>)}</section>
-    <section className="rounded-2xl bg-white p-3 shadow-sm"><div className="mb-3 flex items-center justify-between"><p className="text-xs text-slate-500">{loading ? 'Updating…' : `${total} user${total === 1 ? '' : 's'}`}</p>{!readOnly && <button type="button" onClick={add} className="flex min-h-10 items-center gap-1 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white"><UserPlus className="h-4 w-4" />Invite User</button>}</div><div className="grid gap-2 sm:grid-cols-4"><label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2"><Search className="h-4 w-4 text-slate-400" /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search users" className="min-w-0 flex-1 text-sm outline-none" /></label><select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value as AppRole | ''); setPage(0); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All roles</option>{ROLES.map((item) => <option key={item} value={item}>{getRoleLabel(item)}</option>)}</select><select value={activeFilter} onChange={(event) => { setActiveFilter(event.target.value as typeof activeFilter); setPage(0); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="all">All status</option><option value="active">Active</option><option value="inactive">Inactive</option></select><select value={scopeId} onChange={(event) => { setScopeId(event.target.value); setPage(0); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All scope</option><optgroup label="Offices">{offices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup><optgroup label="Stations">{stations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup></select></div>{loading && !rows.length ? <div className="mt-3"><LoadingSkeleton /></div> : error ? <div className="mt-3"><ErrorState message={error} onRetry={() => void load()} /></div> : rows.length === 0 ? <div className="mt-3"><EmptyState title="No matching users" message="Try changing the filters or search text." /></div> : <div className="mt-3 divide-y divide-slate-100">{rows.map((row) => <button key={row.id} type="button" onClick={() => void open(row)} className="flex min-h-20 w-full items-center gap-3 py-3 text-left"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-800">{row.full_name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><span className="truncate text-sm font-bold text-slate-800">{row.full_name}</span><StatusBadge active={row.active} /></span><span className="mt-0.5 block truncate text-xs text-slate-500">{getRoleLabel(row.role)} · {row.employee_code ?? 'No employee code'}</span><span className="mt-0.5 block truncate text-xs text-slate-400">{[...row.office_names, ...row.station_names].join(' · ') || 'No direct assignments'}</span></span><ChevronRight className="h-4 w-4 text-slate-400" /></button>)}</div>}<PaginationControls page={page} pageSize={20} total={total} onPageChange={setPage} /></section>
-    <DetailDrawer open={drawer} title={inviting ? 'Invite user' : editing ? 'Edit user access' : detail?.full_name ?? 'User details'} onClose={() => !saving && setDrawer(false)}>{formError && <ErrorState message={formError} />}{!detail && !inviting ? <LoadingSkeleton rows={3} /> : editing ? <UserFormView form={form} setForm={setForm} offices={offices} stations={stations} roles={allowedRoles} inviting={inviting} protectedTarget={targetProtected} onToggle={toggle} onSubmit={() => setConfirm(true)} saving={saving} /> : detail && <div className="space-y-3"><Info label="Employee code" value={detail.employee_code ?? 'Not recorded'} /><Info label="Email" value={detail.email ?? 'Not recorded'} /><Info label="Phone" value={detail.phone ?? 'Not recorded'} /><Info label="Role" value={getRoleLabel(detail.role)} /><Info label="Status" value={detail.active ? 'Active' : 'Inactive'} /><Info label="Office assignments" value={detail.office_names.join(', ') || 'None'} /><Info label="Station assignments" value={detail.station_names.join(', ') || 'None'} /><Info label="Active notification devices" value={String(detail.device_count)} /><Info label="Account created" value={new Date(detail.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} />{!readOnly && !targetProtected && <button type="button" onClick={() => { setForm(fromDetail(detail)); setEditing(true); }} className="w-full rounded-xl border border-blue-200 py-2.5 text-sm font-semibold text-blue-700">Edit access</button>}{targetProtected && <ReadOnlyBanner>This Super Admin account can only be managed by a Super Admin.</ReadOnlyBanner>}</div>}</DetailDrawer>
-    {confirm && <ConfirmUserChange title={inviting ? 'Send invitation?' : form.role === 'SUPER_ADMIN' || detail?.role === 'SUPER_ADMIN' ? 'Confirm Super Admin change' : 'Confirm user changes'} saving={saving} onCancel={() => setConfirm(false)} onConfirm={() => void save()} />}
-  </AdminPageShell>;
+  const validate = () => {
+    if (!form.fullName.trim()) return 'Full name is required.';
+    if (inviting && !/^\S+@\S+\.\S+$/.test(form.email.trim())) return 'Enter a valid email address.';
+    if (!allowedRoles.includes(form.role)) return 'That role is not permitted for your account.';
+    if (!inviting && !form.reason.trim() && (form.role !== detail?.role || form.active !== detail?.active || form.officeIds.join() !== detail?.office_ids.join() || form.stationIds.join() !== detail?.station_ids.join())) return 'Provide a reason for role, status, or assignment changes.';
+    return null;
+  };
+
+  const save = async () => {
+    const validation = validate();
+    if (validation) { setFormError(validation); return; }
+    setSaving(true);
+    setFormError(null);
+    try {
+      if (inviting) await api.inviteUser({ fullName: form.fullName.trim(), employeeCode: form.employeeCode.trim() || null, email: form.email.trim(), phone: form.phone.trim() || null, role: form.role, officeIds: form.officeIds, stationIds: form.stationIds, reason: form.reason.trim() || null });
+      else if (detail) await api.manageUserAccess({ id: detail.id, fullName: form.fullName.trim(), employeeCode: form.employeeCode.trim() || null, phone: form.phone.trim() || null, role: form.role, active: form.active, officeIds: form.officeIds, stationIds: form.stationIds, reason: form.reason.trim() || null });
+      setConfirm(false);
+      setDrawer(false);
+      await load();
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : 'Could not save user access.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resendSetupEmail = async () => {
+    if (!detail) return;
+    setResending(true);
+    setResendNotice(null);
+    try {
+      await api.resendSetupEmail(detail.id);
+      setResendNotice({ kind: 'success', message: 'A fresh password setup email has been sent.' });
+    } catch {
+      setResendNotice({ kind: 'error', message: 'Could not send a password setup email. Please try again.' });
+    } finally {
+      setResending(false);
+      setResendConfirm(false);
+    }
+  };
+
+  return (
+    <AdminPageShell title="Users & Access" subtitle="Manage users, roles and assignments" onBack={onBack}>
+      {readOnly && <ReadOnlyBanner>Read only — your directory is restricted to users sharing your assigned office or station.</ReadOnlyBanner>}
+      <section className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {[['Total', total], ['Active', rows.filter((row) => row.active).length], ['Officers', rows.filter((row) => row.role === 'FIELD_OFFICER').length], ['Operators', rows.filter((row) => row.role === 'OPERATOR').length]].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-white p-3 shadow-sm"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 text-xl font-bold text-blue-800">{value}</p></div>)}
+      </section>
+      <section className="rounded-2xl bg-white p-3 shadow-sm lg:p-4">
+        <div className="mb-3 flex items-center justify-between"><p className="text-xs text-slate-500">{loading ? 'Updating...' : `${total} user${total === 1 ? '' : 's'}`}</p>{!readOnly && <button type="button" onClick={add} className="flex min-h-10 items-center gap-1 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white"><UserPlus className="h-4 w-4" />Invite User</button>}</div>
+        <div className="grid gap-2 sm:grid-cols-4">
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2"><Search className="h-4 w-4 text-slate-400" /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search users" className="min-w-0 flex-1 text-sm outline-none" /></label>
+          <select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value as AppRole | ''); setPage(0); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All roles</option>{ROLES.map((item) => <option key={item} value={item}>{getRoleLabel(item)}</option>)}</select>
+          <select value={activeFilter} onChange={(event) => { setActiveFilter(event.target.value as typeof activeFilter); setPage(0); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="all">All status</option><option value="active">Active</option><option value="inactive">Inactive</option></select>
+          <select value={scopeId} onChange={(event) => { setScopeId(event.target.value); setPage(0); }} className="rounded-xl border border-slate-200 px-3 py-2 text-sm"><option value="">All scope</option><optgroup label="Offices">{offices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup><optgroup label="Stations">{stations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup></select>
+        </div>
+        {loading && !rows.length ? <div className="mt-3"><LoadingSkeleton /></div> : error ? <div className="mt-3"><ErrorState message={error} onRetry={() => void load()} /></div> : rows.length === 0 ? <div className="mt-3"><EmptyState title="No matching users" message="Try changing the filters or search text." /></div> : <div className="mt-3 divide-y divide-slate-100 lg:overflow-x-auto"><div className="hidden grid-cols-[minmax(180px,1.2fr)_130px_minmax(190px,1fr)_140px_minmax(220px,1.3fr)_90px_20px] gap-3 border-y border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 lg:grid lg:min-w-[1040px]"><span>User</span><span>Employee code</span><span>Email</span><span>Role</span><span>Assignments</span><span>Status</span><span /></div>{rows.map((row) => <UserAccessRowView key={row.id} row={row} onOpen={() => void open(row)} />)}</div>}
+        <PaginationControls page={page} pageSize={20} total={total} onPageChange={setPage} />
+      </section>
+      <DetailDrawer open={drawer} title={inviting ? 'Invite user' : editing ? 'Edit user access' : detail?.full_name ?? 'User details'} onClose={() => !saving && !resending && setDrawer(false)}>
+        {formError && <ErrorState message={formError} />}
+        {!detail && !inviting ? <LoadingSkeleton rows={3} /> : editing ? <UserFormView form={form} setForm={setForm} offices={offices} stations={stations} roles={allowedRoles} inviting={inviting} protectedTarget={targetProtected} onToggle={toggle} onSubmit={() => setConfirm(true)} saving={saving} /> : detail && <div className="space-y-3">
+          {resendNotice && <p role="status" className={`rounded-xl border px-3 py-2 text-sm ${resendNotice.kind === 'success' ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-red-100 bg-red-50 text-red-800'}`}>{resendNotice.message}</p>}
+          <Info label="Employee code" value={detail.employee_code ?? 'Not recorded'} /><Info label="Email" value={detail.email ?? 'Not recorded'} /><Info label="Phone" value={detail.phone ?? 'Not recorded'} /><Info label="Role" value={getRoleLabel(detail.role)} /><Info label="Status" value={detail.active ? 'Active' : 'Inactive'} /><Info label="Office assignments" value={detail.office_names.join(', ') || 'None'} /><Info label="Station assignments" value={detail.station_names.join(', ') || 'None'} /><Info label="Active notification devices" value={String(detail.device_count)} /><Info label="Account created" value={new Date(detail.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} />
+          {canResendSetupEmail && <button type="button" onClick={() => setResendConfirm(true)} disabled={resending} className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 py-2.5 text-sm font-semibold text-blue-700 disabled:opacity-60"><Mail className="h-4 w-4" />{resending ? 'Sending setup email...' : 'Resend setup email'}</button>}
+          {!readOnly && !targetProtected && <button type="button" onClick={() => { setForm(fromDetail(detail)); setEditing(true); }} className="w-full rounded-xl border border-blue-200 py-2.5 text-sm font-semibold text-blue-700">Edit access</button>}
+          {targetProtected && <ReadOnlyBanner>This Super Admin account can only be managed by a Super Admin.</ReadOnlyBanner>}
+        </div>}
+      </DetailDrawer>
+      {confirm && <ConfirmUserChange title={inviting ? 'Send invitation?' : form.role === 'SUPER_ADMIN' || detail?.role === 'SUPER_ADMIN' ? 'Confirm Super Admin change' : 'Confirm user changes'} saving={saving} onCancel={() => setConfirm(false)} onConfirm={() => void save()} />}
+      {resendConfirm && <ConfirmSetupEmail saving={resending} onCancel={() => setResendConfirm(false)} onConfirm={() => void resendSetupEmail()} />}
+    </AdminPageShell>
+  );
 }
 
-function UserFormView({ form, setForm, offices, stations, roles, inviting, protectedTarget, onToggle, onSubmit, saving }: { form: UserForm; setForm: React.Dispatch<React.SetStateAction<UserForm>>; offices: UsersAccessScopeOption[]; stations: UsersAccessScopeOption[]; roles: AppRole[]; inviting: boolean; protectedTarget: boolean; onToggle: (key: 'officeIds' | 'stationIds', id: string) => void; onSubmit: () => void; saving: boolean }) { const set = <K extends keyof UserForm>(key: K, value: UserForm[K]) => setForm((current) => ({ ...current, [key]: value })); return <div className="space-y-3"><Field label="Full name"><input value={form.fullName} onChange={(event) => set('fullName', event.target.value)} /></Field><Field label="Employee code"><input value={form.employeeCode} onChange={(event) => set('employeeCode', event.target.value)} /></Field><Field label="Email"><input type="email" value={form.email} onChange={(event) => set('email', event.target.value)} disabled={!inviting} /></Field><Field label="Phone"><input value={form.phone} onChange={(event) => set('phone', event.target.value)} /></Field><Field label="Role"><select value={form.role} onChange={(event) => set('role', event.target.value as AppRole)} disabled={protectedTarget}>{roles.map((item) => <option key={item} value={item}>{getRoleLabel(item)}</option>)}</select></Field>{!inviting && <label className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm"><input type="checkbox" checked={form.active} onChange={(event) => set('active', event.target.checked)} disabled={protectedTarget} />Active account</label>}<Assignments label="Office assignments" options={offices} values={form.officeIds} onToggle={(id) => onToggle('officeIds', id)} /><Assignments label="Station assignments" options={stations} values={form.stationIds} onToggle={(id) => onToggle('stationIds', id)} /><Field label="Reason for role, status or assignment changes"><textarea value={form.reason} onChange={(event) => set('reason', event.target.value)} placeholder={inviting ? 'Optional invitation note' : 'Required when access changes'} /></Field><button type="button" onClick={onSubmit} disabled={saving || protectedTarget} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving && <Loader2 className="h-4 w-4 animate-spin" />}{inviting ? 'Review invitation' : 'Review changes'}</button></div>; }
+function UserAccessRowView({ row, onOpen }: { row: UsersAccessRow; onOpen: () => void }) {
+  const assignments = [...row.office_names, ...row.station_names].join(' · ') || 'No direct assignments';
+  return <button type="button" onClick={onOpen} className="flex min-h-20 w-full items-center gap-3 py-3 text-left transition hover:bg-blue-50/40 lg:grid lg:min-w-[1040px] lg:grid-cols-[minmax(180px,1.2fr)_130px_minmax(190px,1fr)_140px_minmax(220px,1.3fr)_90px_20px] lg:px-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-800 lg:hidden">{row.full_name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span><span className="min-w-0 flex-1 lg:hidden"><span className="flex items-center gap-2"><span className="truncate text-sm font-bold text-slate-800">{row.full_name}</span><StatusBadge active={row.active} /></span><span className="mt-0.5 block truncate text-xs text-slate-500">{getRoleLabel(row.role)} · {row.employee_code ?? 'No employee code'}</span><span className="mt-0.5 block truncate text-xs text-slate-400">{assignments}</span></span><span className="hidden truncate text-sm font-bold text-slate-800 lg:block">{row.full_name}</span><span className="hidden truncate text-sm text-slate-600 lg:block">{row.employee_code ?? '—'}</span><span className="hidden truncate text-sm text-slate-600 lg:block">{row.email ?? '—'}</span><span className="hidden text-sm text-slate-700 lg:block">{getRoleLabel(row.role)}</span><span className="hidden truncate text-sm text-slate-500 lg:block" title={assignments}>{assignments}</span><span className="hidden lg:block"><StatusBadge active={row.active} /></span><ChevronRight className="h-4 w-4 text-slate-400" /></button>;
+}
+
+function UserFormView({ form, setForm, offices, stations, roles, inviting, protectedTarget, onToggle, onSubmit, saving }: { form: UserForm; setForm: React.Dispatch<React.SetStateAction<UserForm>>; offices: UsersAccessScopeOption[]; stations: UsersAccessScopeOption[]; roles: AppRole[]; inviting: boolean; protectedTarget: boolean; onToggle: (key: 'officeIds' | 'stationIds', id: string) => void; onSubmit: () => void; saving: boolean }) {
+  const set = <K extends keyof UserForm>(key: K, value: UserForm[K]) => setForm((current) => ({ ...current, [key]: value }));
+  return <div className="space-y-3"><Field label="Full name"><input value={form.fullName} onChange={(event) => set('fullName', event.target.value)} /></Field><Field label="Employee code"><input value={form.employeeCode} onChange={(event) => set('employeeCode', event.target.value)} /></Field><Field label="Email"><input type="email" value={form.email} onChange={(event) => set('email', event.target.value)} disabled={!inviting} /></Field><Field label="Phone"><input value={form.phone} onChange={(event) => set('phone', event.target.value)} /></Field><Field label="Role"><select value={form.role} onChange={(event) => set('role', event.target.value as AppRole)} disabled={protectedTarget}>{roles.map((item) => <option key={item} value={item}>{getRoleLabel(item)}</option>)}</select></Field>{!inviting && <label className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm"><input type="checkbox" checked={form.active} onChange={(event) => set('active', event.target.checked)} disabled={protectedTarget} />Active account</label>}<Assignments label="Office assignments" options={offices} values={form.officeIds} onToggle={(id) => onToggle('officeIds', id)} /><Assignments label="Station assignments" options={stations} values={form.stationIds} onToggle={(id) => onToggle('stationIds', id)} /><Field label="Reason for role, status or assignment changes"><textarea value={form.reason} onChange={(event) => set('reason', event.target.value)} placeholder={inviting ? 'Optional invitation note' : 'Required when access changes'} /></Field><button type="button" onClick={onSubmit} disabled={saving || protectedTarget} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving && <Loader2 className="h-4 w-4 animate-spin" />}{inviting ? 'Review invitation' : 'Review changes'}</button></div>;
+}
+
 function Assignments({ label, options, values, onToggle }: { label: string; options: UsersAccessScopeOption[]; values: string[]; onToggle: (id: string) => void }) { return <div><p className="mb-1 text-xs font-semibold text-slate-600">{label}</p><div className="max-h-32 overflow-auto rounded-xl border border-slate-200">{options.length ? options.map((option) => <label key={option.id} className="flex items-center gap-2 border-b border-slate-100 p-2 text-sm last:border-0"><input type="checkbox" checked={values.includes(option.id)} onChange={() => onToggle(option.id)} />{option.name}<span className="text-xs text-slate-400">{option.code}</span></label>) : <p className="p-3 text-xs text-slate-500">No accessible options.</p>}</div></div>; }
-function ConfirmUserChange({ title, saving, onCancel, onConfirm }: { title: string; saving: boolean; onCancel: () => void; onConfirm: () => void }) { return <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/40 p-4"><section role="alertdialog" aria-modal="true" aria-label={title} className="w-full max-w-sm rounded-2xl bg-white p-5"><ShieldAlert className="h-6 w-6 text-amber-600" /><h2 className="mt-3 text-base font-bold text-slate-900">{title}</h2><p className="mt-1 text-sm leading-5 text-slate-600">Access changes are audited. Deactivating a user removes application access but retains operational history.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onCancel} disabled={saving} className="flex-1 rounded-xl border py-2.5 text-sm font-semibold">Cancel</button><button type="button" onClick={onConfirm} disabled={saving} className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white">{saving ? 'Saving…' : 'Confirm'}</button></div></section></div>; }
+function ConfirmUserChange({ title, saving, onCancel, onConfirm }: { title: string; saving: boolean; onCancel: () => void; onConfirm: () => void }) { return <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/40 p-4"><section role="alertdialog" aria-modal="true" aria-label={title} className="w-full max-w-sm rounded-2xl bg-white p-5"><ShieldAlert className="h-6 w-6 text-amber-600" /><h2 className="mt-3 text-base font-bold text-slate-900">{title}</h2><p className="mt-1 text-sm leading-5 text-slate-600">Access changes are audited. Deactivating a user removes application access but retains operational history.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onCancel} disabled={saving} className="flex-1 rounded-xl border py-2.5 text-sm font-semibold">Cancel</button><button type="button" onClick={onConfirm} disabled={saving} className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white">{saving ? 'Saving...' : 'Confirm'}</button></div></section></div>; }
+function ConfirmSetupEmail({ saving, onCancel, onConfirm }: { saving: boolean; onCancel: () => void; onConfirm: () => void }) { return <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/40 p-4"><section role="alertdialog" aria-modal="true" aria-label="Resend setup email" className="w-full max-w-sm rounded-2xl bg-white p-5"><Mail className="h-6 w-6 text-blue-600" /><h2 className="mt-3 text-base font-bold text-slate-900">Resend password setup email?</h2><p className="mt-1 text-sm leading-5 text-slate-600">This sends a fresh password setup link and does not change the user’s role, status, or assignments.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onCancel} disabled={saving} className="flex-1 rounded-xl border py-2.5 text-sm font-semibold">Cancel</button><button type="button" onClick={onConfirm} disabled={saving} className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white">{saving ? 'Sending...' : 'Send email'}</button></div></section></div>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block text-xs font-semibold text-slate-600"><span className="mb-1 block">{label}</span>{children}</label>; }
 function Info({ label, value }: { label: string; value: string }) { return <div className="border-b border-slate-100 py-2 last:border-0"><span className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span><span className="mt-0.5 block text-sm text-slate-800">{value}</span></div>; }

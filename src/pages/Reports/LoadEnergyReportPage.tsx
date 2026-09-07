@@ -136,11 +136,12 @@ export function LoadEnergyReportPage({ onBack }: { onBack: () => void }) {
       subtitle="Compact load, energy and data-completeness analysis"
       onBack={onBack}
       contentRef={contentRef}
-      actions={<ReportActions title="Load & Energy Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} />}
+      desktopWide
+      actions={<ReportActions title="Load & Energy Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
       filters={<ReportFilters values={filters} options={{
         stations, feeders, feederApplicable: Boolean(filters.stationId),
         groupingOptions: [{ value: isOneDay(filters) ? 'HOURLY' : 'DAILY', label: isOneDay(filters) ? 'Hourly (single day)' : 'Daily (selected range)' }],
-      }} generating={resource.loading} onChange={setFilters} onGenerate={generate} />}
+      }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
     >
       {loadedReport ? (
         <ReportPreview

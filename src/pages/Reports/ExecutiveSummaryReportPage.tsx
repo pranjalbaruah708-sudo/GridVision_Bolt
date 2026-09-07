@@ -74,8 +74,9 @@ export function ExecutiveSummaryReportPage({ onBack }: { onBack: () => void }) {
     subtitle="Concise management overview of operational conditions"
     onBack={onBack}
     contentRef={contentRef}
-    actions={<ReportActions title="Executive Summary Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} />}
-    filters={<ReportFilters values={filters} options={{ stations, feeders: [] }} generating={resource.loading} onChange={setFilters} onGenerate={generate} />}
+    desktopWide
+    actions={<ReportActions title="Executive Summary Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+    filters={<ReportFilters values={filters} options={{ stations, feeders: [] }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
   >
     {generatedFilters ? <ReportPreview
       meta={{ title: 'Executive Summary Report', stationScope: scope, periodLabel: getReportPeriodLabel(generatedFilters), generatedAt: resource.generatedAt ?? new Date(), appliedFilters: [`From ${generatedFilters.fromDate}`, `To ${generatedFilters.toDate}`] }}

@@ -77,6 +77,15 @@ export type InterruptionStatus =
   | 'RESTORED'
   | 'CANCELLED';
 
+export type OperationalEntryMode =
+  | 'ONLINE'
+  | 'OFFLINE';
+
+export type NotificationClass =
+  | 'LIVE'
+  | 'DELAYED_SYNC'
+  | 'HISTORICAL_SYNC';
+
 export type Interruption = {
   id: string;
 
@@ -95,6 +104,12 @@ export type Interruption = {
   current_status: InterruptionStatus;
 
   etr: string | null;
+
+  entry_mode?: OperationalEntryMode | null;
+  recorded_at?: string | null;
+  synced_at?: string | null;
+  client_operation_id?: string | null;
+  restore_client_operation_id?: string | null;
 
   created_at?: string;
   updated_at?: string;
@@ -192,6 +207,12 @@ export type LogBookEntry = {
 
   weather: string | null;
   remarks: string | null;
+
+  entry_mode?: OperationalEntryMode | null;
+  recorded_at?: string | null;
+  synced_at?: string | null;
+  client_operation_id?: string | null;
+  offline_sequence_final?: boolean | null;
 
   created_at?: string;
   updated_at?: string;

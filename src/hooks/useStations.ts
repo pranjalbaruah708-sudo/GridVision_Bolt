@@ -5,6 +5,12 @@ import {
 } from 'react';
 
 import { api } from '@/services/api';
+import {
+  isOnline,
+  clearAuthorizedOperationalScope,
+  readAuthorizedOperationalScope,
+  writeAuthorizedOperationalScope,
+} from '@/services/offline';
 import { supabase } from '@/services/supabase';
 
 import type {
@@ -67,6 +73,29 @@ export function useStations() {
       setError(null);
 
       try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const userId = sessionData.session?.user.id;
+
+        if (!userId) {
+          throw new Error('An authenticated session is required to load operational scope.');
+        }
+
+        if (!isOnline()) {
+          const cachedScope = readAuthorizedOperationalScope(userId);
+          if (!cachedScope) {
+            throw new Error('Offline operational scope is unavailable. Connect once to refresh your authorized stations and feeders.');
+          }
+
+          setStations(cachedScope.stations);
+          setFeeders(cachedScope.feeders);
+          setActiveStationId((current) =>
+            cachedScope.stations.some((station) => station.id === current)
+              ? current
+              : cachedScope.stations[0]?.id ?? ''
+          );
+          return true;
+        }
+
         /*
          * Load station master and user's accessible IDs
          * in parallel.
@@ -94,8 +123,8 @@ export function useStations() {
           setError(
             'No stations are available for this user.'
           );
-
-          return;
+          clearAuthorizedOperationalScope(userId);
+          return false;
         }
 
         /* -------------------------------------------------
@@ -136,13 +165,25 @@ export function useStations() {
           setError(
             'Accessible station records could not be found.'
           );
-
-          return;
+          clearAuthorizedOperationalScope(userId);
+          return false;
         }
+
+        setFeedersLoading(true);
+        const authorizedStationIds = accessibleStations.map((station) => station.id);
+        const accessibleFeeders = await api.getFeedersForStations(authorizedStationIds);
+
+        writeAuthorizedOperationalScope({
+          userId,
+          authorizedStationIds,
+          stations: accessibleStations,
+          feeders: accessibleFeeders,
+        });
 
         setStations(
           accessibleStations
         );
+        setFeeders(accessibleFeeders);
 
         /* -------------------------------------------------
            Keep currently selected station when still valid.
@@ -170,6 +211,7 @@ export function useStations() {
             );
           }
         );
+        return true;
       } catch (e) {
         console.error(
           'Failed to load accessible stations:',
@@ -185,7 +227,9 @@ export function useStations() {
             ? e.message
             : 'Failed to load stations'
         );
+        return false;
       } finally {
+        setFeedersLoading(false);
         setLoading(false);
       }
     }, []);
@@ -198,82 +242,6 @@ export function useStations() {
     void load();
   }, [
     load,
-  ]);
-
-  /* =======================================================
-     LOAD FEEDERS WHEN ACTIVE STATION CHANGES
-
-     This is important for officers because they may switch
-     between several stations.
-  ======================================================= */
-
-  useEffect(() => {
-    let cancelled =
-      false;
-
-    async function loadFeeders() {
-      if (
-        !activeStationId
-      ) {
-        setFeeders([]);
-        return;
-      }
-
-      setFeedersLoading(
-        true
-      );
-
-      try {
-        const rows =
-          await api.getFeeders(
-            activeStationId
-          );
-
-        if (
-          cancelled
-        ) {
-          return;
-        }
-
-        setFeeders(
-          rows
-        );
-      } catch (e) {
-        console.error(
-          'Failed to load feeders:',
-          e
-        );
-
-        if (
-          !cancelled
-        ) {
-          setFeeders([]);
-
-          setError(
-            e instanceof Error
-              ? e.message
-              : 'Failed to load feeders'
-          );
-        }
-      } finally {
-        if (
-          !cancelled
-        ) {
-          setFeedersLoading(
-            false
-          );
-        }
-      }
-    }
-
-    void loadFeeders();
-
-    return () => {
-      cancelled =
-        true;
-    };
-  }, [
-    activeStationId,
   ]);
 
   /* =======================================================

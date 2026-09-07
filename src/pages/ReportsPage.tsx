@@ -28,6 +28,7 @@ import {
   type AppRole,
 } from '@/services/api';
 import { hasCapability } from '@/security/permissions';
+import { DesktopPageContainer } from '@/components/layout/DesktopPageContainer';
 
 export type ReportType =
   | 'daily-log-book'
@@ -65,7 +66,7 @@ const REPORT_GROUPS: ReportGroup[] = [
   'Administration',
 ];
 
-const REPORT_DEFINITIONS: ReportDefinition[] = [
+export const REPORT_DEFINITIONS: ReportDefinition[] = [
   {
     type: 'daily-log-book',
     group: 'Quick Reports',
@@ -160,6 +161,18 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
   },
 ];
 
+const REPORT_ROUTE_SUB: Record<ReportType, string> = {
+  'daily-log-book': 'log-book', 'interruption': 'interruption-report', 'load-energy': 'load-energy-report',
+  'data-completeness': 'data-completeness-report', 'parameter-exceptions': 'parameter-exception-report',
+  'station-performance': 'station-performance-report', 'feeder-performance': 'feeder-performance-report',
+  'executive-summary': 'executive-summary-report', 'operator-activity': 'operator-activity-report',
+  'notification-delivery': 'notification-delivery-report',
+};
+
+export function getAvailableReportNavigation(role: AppRole) {
+  return REPORT_DEFINITIONS.filter((report) => !report.adminOnly || hasCapability(role, 'view_all_audit')).map((report) => ({ label: report.title, sub: REPORT_ROUTE_SUB[report.type] }));
+}
+
 type ReportsPageProps = {
   onOpenReport: (reportType: ReportType) => void;
   onBack?: () => void;
@@ -205,12 +218,13 @@ export function ReportsPage({
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <header className="rounded-b-3xl bg-gradient-to-r from-blue-900 to-blue-700 px-5 pb-6 pt-5 shadow-lg">
-        <div className="flex items-center justify-between text-white">
+      <header className="rounded-b-3xl bg-gradient-to-r from-blue-900 to-blue-700 px-5 pb-6 pt-5 shadow-lg lg:rounded-none lg:border-b lg:border-slate-200 lg:bg-none lg:bg-white lg:px-0 lg:py-5 lg:shadow-none">
+        <DesktopPageContainer width="wide">
+        <div className="flex items-center justify-between text-white lg:text-slate-900">
           <button
             type="button"
             onClick={onBack}
-            className="grid h-10 w-10 place-items-center rounded-full bg-white/10 transition hover:bg-white/20"
+            className="grid h-10 w-10 place-items-center rounded-full bg-white/10 transition hover:bg-white/20 lg:hidden"
             aria-label="Back"
           >
             <ArrowLeft size={24} />
@@ -218,20 +232,22 @@ export function ReportsPage({
 
           <div className="text-center">
             <h1 className="text-2xl font-bold">Reports</h1>
-            <p className="mt-1 text-xs text-blue-100/80">GridVision Reports</p>
+            <p className="mt-1 text-xs text-blue-100/80 lg:text-slate-500">GridVision Reports</p>
           </div>
 
           <div className="h-10 w-10" aria-hidden="true" />
         </div>
+        </DesktopPageContainer>
       </header>
 
-      <main className="mx-auto w-full max-w-md px-4 py-5 pb-28">
+      <main className="mx-auto w-full max-w-md px-4 py-5 pb-28 lg:max-w-none lg:px-0 lg:pb-10 lg:pt-6">
+        <DesktopPageContainer width="wide">
         <div className="mb-4">
-          <h2 className="text-base font-bold text-slate-800">Report Catalogue</h2>
-          <p className="mt-1 text-xs text-slate-500">Select an available report. Export options appear inside generated reports.</p>
+          <h2 className="text-base font-bold text-slate-800 lg:text-xl">Report Catalogue</h2>
+          <p className="mt-1 text-xs text-slate-500 lg:text-sm">Select an available report. Export options appear inside generated reports.</p>
         </div>
 
-        <label className="mb-5 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+        <label className="mb-5 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm lg:max-w-md">
           <Search className="h-4 w-4 text-slate-400" />
           <input
             type="search"
@@ -243,11 +259,11 @@ export function ReportsPage({
           />
         </label>
 
-        <div className="space-y-5">
+        <div className="space-y-5 lg:space-y-7">
           {groupedReports.map(({ group, reports }) => (
             <section key={group}>
               <h3 className="mb-2 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">{group}</h3>
-              <div className="space-y-2">
+              <div className="space-y-2 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0 xl:grid-cols-3">
                 {reports.map((report) => (
                   <ReportRow
                     key={report.type}
@@ -265,6 +281,7 @@ export function ReportsPage({
             No reports match “{search.trim()}”.
           </div>
         )}
+        </DesktopPageContainer>
       </main>
     </div>
   );
@@ -303,7 +320,7 @@ function ReportRow({
     <button
       type="button"
       onClick={() => onOpenReport(report.type)}
-      className="flex w-full items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200/80 transition hover:bg-slate-50 active:scale-[0.99]"
+      className="flex w-full items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200/80 transition hover:bg-slate-50 active:scale-[0.99] lg:min-h-32 lg:items-start lg:p-5"
       aria-label={`Open ${report.title}`}
     >
       {content}

@@ -18,6 +18,7 @@ type ReportTableProps<Row> = {
     totalRows: number;
     onPageChange: (page: number) => void;
   };
+  desktop?: boolean;
 };
 
 export function ReportTable<Row>({
@@ -26,6 +27,7 @@ export function ReportTable<Row>({
   rowKey,
   pageSize = 25,
   pagination,
+  desktop = false,
 }: ReportTableProps<Row>) {
   const [page, setPage] = useState(0);
   const localTotalPages = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -50,15 +52,15 @@ export function ReportTable<Row>({
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-left text-xs">
-          <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+        <table className={`w-full min-w-[560px] text-left text-xs ${desktop ? 'lg:min-w-[1480px]' : ''}`}>
+          <thead className={`bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500 ${desktop ? 'lg:sticky lg:top-0 lg:z-10' : ''}`}>
             <tr>
-              {columns.map((column) => <th key={column.id} className={`px-3 py-2.5 font-bold ${column.align === 'right' ? 'text-right' : 'text-left'} ${column.className ?? ''}`}>{column.label}</th>)}
+              {columns.map((column) => <th key={column.id} className={`px-3 py-2.5 font-bold ${desktop ? 'lg:whitespace-nowrap lg:px-4 lg:py-3' : ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${column.className ?? ''}`}>{column.label}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {visibleRows.map((row, index) => <tr key={rowKey(row, (pagination ? currentPage * pagination.pageSize : page * pageSize) + index)} className="hover:bg-blue-50/40">
-              {columns.map((column) => <td key={column.id} className={`px-3 py-2.5 text-slate-700 ${column.align === 'right' ? 'text-right' : 'text-left'} ${column.className ?? ''}`}>{column.value(row)}</td>)}
+              {columns.map((column) => <td key={column.id} className={`px-3 py-2.5 text-slate-700 ${desktop ? 'lg:px-4 lg:py-3' : ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${column.className ?? ''}`}>{column.value(row)}</td>)}
             </tr>)}
           </tbody>
         </table>

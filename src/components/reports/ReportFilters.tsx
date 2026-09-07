@@ -34,6 +34,7 @@ type ReportFiltersProps = {
   generating?: boolean;
   onChange: (values: ReportFilterValues) => void;
   onGenerate: () => void;
+  desktopLayout?: boolean;
 };
 
 export function ReportFilters({
@@ -42,6 +43,7 @@ export function ReportFilters({
   generating = false,
   onChange,
   onGenerate,
+  desktopLayout = false,
 }: ReportFiltersProps) {
   const feeders = useMemo(
     () => options.feeders.filter((feeder) => !values.stationId || feeder.station_id === values.stationId),
@@ -68,7 +70,7 @@ export function ReportFilters({
         <h2 className="text-sm font-bold text-slate-800">Report Filters</h2>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={`grid gap-3 sm:grid-cols-2 ${desktopLayout ? 'lg:grid-cols-3 xl:grid-cols-5' : ''}`}>
         <Field label="Station scope">
           <select value={values.stationId} onChange={(event) => onChange({ ...values, stationId: event.target.value, feederId: '' })} className={INPUT_CLASS}>
             {!options.requireStation && <option value="">All accessible stations</option>}

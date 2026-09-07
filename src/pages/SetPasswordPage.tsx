@@ -5,6 +5,7 @@ import { Logo } from '@/components/Logo';
 import { supabase } from '@/services/supabase';
 
 type SetPasswordPageProps = {
+  mode: 'invite' | 'recovery';
   hasValidSession: boolean;
   onComplete: () => void;
   onDismiss: () => void;
@@ -12,18 +13,21 @@ type SetPasswordPageProps = {
 
 const invalidInvitationMessage =
   'This invitation link is invalid or has expired. Please contact your administrator for a new invitation.';
+const invalidRecoveryMessage =
+  'This password setup link is invalid or has expired. Please contact your administrator for a new setup email.';
 
 function clearInvitationCallbackUrl() {
   const url = new URL(window.location.href);
   url.searchParams.delete('invite');
+  url.searchParams.delete('reset-password');
   window.history.replaceState(null, '', `${url.pathname}${url.search}`);
 }
 
-function getFriendlySetupError(error: unknown) {
+function getFriendlySetupError(error: unknown, invalidLinkMessage: string) {
   const message = error instanceof Error ? error.message.toLowerCase() : '';
 
   if (/session|jwt|token|expired|invalid/i.test(message)) {
-    return invalidInvitationMessage;
+    return invalidLinkMessage;
   }
 
   if (/network|fetch|connection|offline|timeout/i.test(message)) {
@@ -33,14 +37,15 @@ function getFriendlySetupError(error: unknown) {
   return 'We could not set your password right now. Please try again.';
 }
 
-export function SetPasswordPage({ hasValidSession, onComplete, onDismiss }: SetPasswordPageProps) {
+export function SetPasswordPage({ mode, hasValidSession, onComplete, onDismiss }: SetPasswordPageProps) {
+  const invalidLinkMessage = mode === 'invite' ? invalidInvitationMessage : invalidRecoveryMessage;
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(
-    hasValidSession ? null : invalidInvitationMessage
+    hasValidSession ? null : invalidLinkMessage
   );
   const [success, setSuccess] = useState(false);
 
@@ -63,7 +68,7 @@ export function SetPasswordPage({ hasValidSession, onComplete, onDismiss }: SetP
     clearError();
 
     if (!hasValidSession) {
-      setError(invalidInvitationMessage);
+      setError(invalidLinkMessage);
       return;
     }
 
@@ -92,14 +97,14 @@ export function SetPasswordPage({ hasValidSession, onComplete, onDismiss }: SetP
       clearInvitationCallbackUrl();
       setSuccess(true);
     } catch (updateError) {
-      setError(getFriendlySetupError(updateError));
+      setError(getFriendlySetupError(updateError, invalidLinkMessage));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <main className="relative min-h-dvh overflow-x-hidden bg-gradient-to-br from-[#0B2E63] via-[#154C9E] to-[#0A2147] px-5 py-8 sm:px-6 sm:py-10">
+    <main className="relative min-h-dvh overflow-x-hidden bg-gradient-to-br from-[#0B2E63] via-[#154C9E] to-[#0A2147] px-5 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 opacity-[0.14]"
@@ -111,7 +116,7 @@ export function SetPasswordPage({ hasValidSession, onComplete, onDismiss }: SetP
       />
       <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-14 h-64 w-64 -translate-x-1/2 rounded-full bg-cyan-300/20 blur-3xl" />
 
-      <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-md flex-col justify-center py-3 sm:min-h-[calc(100dvh-5rem)]">
+      <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-md flex-col justify-center py-3 sm:min-h-[calc(100dvh-5rem)] lg:min-h-[calc(100dvh-6rem)] lg:max-w-[460px] lg:py-0">
         <header className="mb-7 text-center sm:mb-8">
           <div className="mx-auto flex h-[82px] w-[82px] items-center justify-center rounded-[26px] border border-cyan-100/30 bg-white/10 p-3 shadow-[0_18px_45px_rgba(3,24,61,0.34)] backdrop-blur-sm">
             <Logo size={58} title="GridVision" />
@@ -123,13 +128,19 @@ export function SetPasswordPage({ hasValidSession, onComplete, onDismiss }: SetP
         </header>
 
         <section
-          aria-label="Set password"
+          aria-label={mode === 'invite' ? 'Set password' : 'Reset password'}
           aria-busy={submitting}
           className="rounded-[28px] border border-white/65 bg-[#F5F7FA]/95 p-6 shadow-[0_24px_60px_rgba(3,24,61,0.28)] backdrop-blur-xl sm:p-8"
         >
           <div className="mb-6">
-            <h2 className="text-[25px] font-bold tracking-[-0.025em] text-slate-900">Set your password</h2>
-            <p className="mt-1.5 text-sm leading-6 text-slate-600">Create a password to activate your GridVision account.</p>
+            <h2 className="text-[25px] font-bold tracking-[-0.025em] text-slate-900">
+              {mode === 'invite' ? 'Set your password' : 'Reset your password'}
+            </h2>
+            <p className="mt-1.5 text-sm leading-6 text-slate-600">
+              {mode === 'invite'
+                ? 'Create a password to activate your GridVision account.'
+                : 'Choose a new password for your GridVision account.'}
+            </p>
           </div>
 
           {error && (

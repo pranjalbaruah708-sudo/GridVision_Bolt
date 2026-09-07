@@ -4316,6 +4316,9 @@ function SummaryTile({
 }) {
   return (
     <div
+      data-pdf-kind="kpi"
+      data-pdf-label={label}
+      data-pdf-value={value}
       style={{
         border:
           '1px solid #E2E8F0',
@@ -4424,6 +4427,9 @@ function SmallStat({
 }) {
   return (
     <div
+      data-pdf-kind="kpi"
+      data-pdf-label={label}
+      data-pdf-value={value}
       style={{
         border:
           '1px solid #E2E8F0',
@@ -4784,6 +4790,11 @@ function RankedBarList({
               }
 
               type="button"
+
+              data-pdf-kind="row"
+              data-pdf-label={`${index + 1}. ${item.label}`}
+              data-pdf-value={item.displayValue}
+              data-pdf-detail={item.secondaryText}
 
               className="gv-ia-clickable"
 

@@ -16,3 +16,10 @@ enabled = true
 # the caller token itself before any invitation work is performed.
 verify_jwt = false
 entrypoint = "./functions/invite-user/index.ts"
+
+[functions.resend-setup-email]
+enabled = true
+# CORS preflight requests do not contain a bearer token. The function performs
+# its own authenticated caller and role verification for every POST request.
+verify_jwt = false
+entrypoint = "./functions/resend-setup-email/index.ts"

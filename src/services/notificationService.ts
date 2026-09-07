@@ -1,4 +1,8 @@
 import { supabase } from '@/services/supabase';
+import type {
+  NotificationClass,
+  OperationalEntryMode,
+} from '@/types';
 
 // ======================================================
 // Notification hierarchy levels
@@ -56,6 +60,11 @@ export interface NotificationResult {
     created_by: string;
     created_at: string;
     updated_at: string;
+    notification_class?: NotificationClass | null;
+    source_entry_mode?: OperationalEntryMode | null;
+    source_recorded_at?: string | null;
+    source_synced_at?: string | null;
+    source_operation_id?: string | null;
   };
 
   recipients: NotificationRecipient[];
@@ -86,16 +95,6 @@ export async function createNotification(
     eventTime,
   } = params;
 
-  console.log(
-    '🔔 Creating notification:',
-    {
-      stationId,
-      feederId,
-      message,
-      maxUnitType,
-    }
-  );
-
   // ==================================================
   // 1. Get currently authenticated user
   // ==================================================
@@ -119,11 +118,6 @@ export async function createNotification(
       'User must be authenticated to create a notification.'
     );
   }
-
-  console.log(
-    '👤 Notification created by:',
-    user.id
-  );
 
   // ==================================================
   // 2. Create notification event
@@ -160,11 +154,6 @@ export async function createNotification(
       'Notification event was created but no record was returned.'
     );
   }
-
-  console.log(
-    '✅ Notification event created:',
-    event.id
-  );
 
   // ==================================================
   // 3. Resolve notification recipients
@@ -204,10 +193,6 @@ export async function createNotification(
   const resolvedRecipients =
     (recipients ?? []) as NotificationRecipient[];
 
-  console.log(
-    `👥 ${resolvedRecipients.length} eligible recipient device(s) found.`
-  );
-
   // ==================================================
   // 4. No recipients
   //
@@ -217,10 +202,6 @@ export async function createNotification(
   // ==================================================
 
   if (resolvedRecipients.length === 0) {
-    console.log(
-      '⚠️ No eligible active devices found for this notification.'
-    );
-
     return {
       event,
       recipients: [],
@@ -265,10 +246,6 @@ export async function createNotification(
   }
 
 const finalRecipients = insertedRecipients ?? [];
-
-  console.log(
-    `✅ ${finalRecipients.length} notification recipient record(s) created.`
-  );
 
   // ==================================================
   // 6. Return event + recipients

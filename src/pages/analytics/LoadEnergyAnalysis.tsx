@@ -2985,6 +2985,7 @@ const loadTrend = useCallback(
   return (
     <>
       <div
+        className="gv-load-energy-root"
         style={{
           display: "flex",
           flexDirection:
@@ -3017,6 +3018,7 @@ const loadTrend = useCallback(
             </span>
 
             <select
+              aria-label="Station"
               value={
                 selectedStationId
               }
@@ -3073,6 +3075,7 @@ const loadTrend = useCallback(
             </span>
 
             <select
+              aria-label="Period"
               value={period}
               onChange={(
                 event
@@ -3104,6 +3107,8 @@ const loadTrend = useCallback(
 
           <button
             type="button"
+            data-pdf-filter-label="Date range"
+            data-pdf-filter-value={`${formatShortDate(range.startDate)} - ${formatShortDate(range.endDate)}`}
             onClick={
               period ===
               "Custom"
@@ -3556,6 +3561,7 @@ const loadTrend = useCallback(
               }
               right={
                 <select
+                  aria-label="Performance metric"
                   value={
                     rankingMetric
                   }
@@ -3918,6 +3924,7 @@ const loadTrend = useCallback(
                 >
                   From
                   <input
+                    aria-label="Feeder profile start date"
                     type="date"
                     value={
                       feederProfileStartDate
@@ -3957,6 +3964,7 @@ const loadTrend = useCallback(
                 >
                   To
                   <input
+                    aria-label="Feeder profile end date"
                     type="date"
                     value={
                       feederProfileEndDate
@@ -3986,6 +3994,7 @@ const loadTrend = useCallback(
                 </label>
 
                 <select
+                  aria-label="Feeder profile parameter"
                   value={
                     feederParameter
                   }
@@ -4195,6 +4204,8 @@ const loadTrend = useCallback(
           <HeatmapLegend />
 
           <div
+            data-pdf-kind="heatmap"
+            data-pdf-heatmap={JSON.stringify(heatmap.map((cell) => ({ date: cell.date, hour: cell.hour, status: cell.status })))}
             style={{
               overflowX: "auto",
               paddingBottom: 6,
@@ -4920,6 +4931,10 @@ function SummaryCard({
 
   return (
     <div
+      data-pdf-kind="kpi"
+      data-pdf-label={label}
+      data-pdf-value={value}
+      data-pdf-detail={subtitle}
       style={{
         border:
           "1px solid #E2E8F0",
@@ -4998,6 +5013,10 @@ function CompletenessCard({
 
   return (
     <div
+      data-pdf-kind="kpi"
+      data-pdf-label="Data Completeness"
+      data-pdf-value={`${rounded}%`}
+      data-pdf-detail={`${entered} / ${expected} feeder-hour slots`}
       style={{
         border:
           "1px solid #E2E8F0",
@@ -5332,6 +5351,10 @@ function RankingList({
             <button
               type="button"
               key={row.id}
+              data-pdf-kind="row"
+              data-pdf-label={`${index + 1}. ${row.name}`}
+              data-pdf-value={formatRankingValue(row.value, metric)}
+              data-pdf-detail={`Performance ranking by ${RANKING_OPTIONS.find((option) => option.value === metric)?.label ?? metric}`}
               onClick={() =>
                 onSelect(
                   row.id
@@ -5464,6 +5487,10 @@ function HealthRow({
   return (
     <button
       type="button"
+      data-pdf-kind="row"
+      data-pdf-label={title}
+      data-pdf-value={value}
+      data-pdf-detail={subtitle}
       onClick={onClick}
       aria-label={`View ${title} details`}
       style={{
@@ -5773,6 +5800,9 @@ function MiniMetric({
 }) {
   return (
     <div
+      data-pdf-kind="kpi"
+      data-pdf-label={label}
+      data-pdf-value={value}
       style={{
         padding: 10,
         borderRadius: 12,
@@ -6065,8 +6095,8 @@ function ModalHeader({
         {title}
       </h3>
 
-      <button
-        type="button"
+    <button
+      type="button"
         onClick={
           onClose
         }
@@ -6091,6 +6121,9 @@ function ModalMetric({
 }) {
   return (
     <div
+      data-pdf-kind="kpi"
+      data-pdf-label={label}
+      data-pdf-value={value}
       style={{
         display: "flex",
         justifyContent:

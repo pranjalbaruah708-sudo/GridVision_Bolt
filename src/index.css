@@ -34,6 +34,29 @@ body {
 /* Mobile safe bottom padding */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
 
+/* Keep authenticated Android screens below the native status bar. Module
+   selection renders outside ResponsiveAppShell and retains its own safe area. */
+@media (max-width: 1023px) {
+  .gv-android-shell {
+    --gv-android-safe-top: max(env(safe-area-inset-top, 0px), 24px);
+    padding-top: var(--gv-android-safe-top);
+  }
+
+  .gv-android-shell::before {
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 50;
+    height: var(--gv-android-safe-top);
+    background: #0d47a1;
+    content: '';
+    pointer-events: none;
+  }
+
+  .gv-android-shell header.sticky {
+    top: var(--gv-android-safe-top);
+  }
+}
+
 /* Smooth scrolling */
 * { scroll-behavior: smooth; }
 

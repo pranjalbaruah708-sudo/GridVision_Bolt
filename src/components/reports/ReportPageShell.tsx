@@ -6,6 +6,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   PageBody,
 } from '@/components/ui/Page';
+import { DesktopPageHeading } from '@/components/layout/DesktopPageHeading';
 
 type ReportPageShellProps = {
   title: string;
@@ -15,6 +16,7 @@ type ReportPageShellProps = {
   filters: ReactNode;
   contentRef: RefObject<HTMLDivElement>;
   children: ReactNode;
+  desktopWide?: boolean;
 };
 
 export function ReportPageShell({
@@ -25,10 +27,11 @@ export function ReportPageShell({
   filters,
   contentRef,
   children,
+  desktopWide = false,
 }: ReportPageShellProps) {
   return (
     <div className="min-h-screen bg-[#EEF3F8]">
-      <header className="rounded-b-[22px] bg-gradient-to-br from-[#0D47A1] to-[#1565C0] px-4 pb-4 pt-[22px] text-white shadow-md">
+      <header className="rounded-b-[22px] bg-gradient-to-br from-[#0D47A1] to-[#1565C0] px-4 pb-4 pt-[22px] text-white shadow-md lg:hidden">
         <div className="grid grid-cols-[32px_minmax(0,1fr)_32px] items-start gap-2">
           <button
             type="button"
@@ -45,10 +48,11 @@ export function ReportPageShell({
           <span aria-hidden="true" />
         </div>
       </header>
-      <PageBody>
+      <DesktopPageHeading title={title} subtitle={subtitle} actions={actions} />
+      <PageBody className={desktopWide ? 'lg:max-w-7xl lg:px-6 lg:pb-10 xl:px-8' : ''}>
         <div className="space-y-4">
           {filters}
-          {actions && <div className="flex flex-wrap justify-end gap-2" data-report-exclude>{actions}</div>}
+          {actions && <div className="flex flex-wrap justify-end gap-2 lg:hidden" data-report-exclude>{actions}</div>}
           <div ref={contentRef} className="rounded-2xl bg-white p-4 shadow-sm">
             {children}
           </div>

@@ -18,13 +18,21 @@ import {
 
 import {
   clearCache,
+  completeQueuedInterruptionAdd,
   dequeueOp,
+  dequeueOps,
   enqueueOp,
+  enqueueInterruptionAdd,
+  enqueueInterruptionRestore,
+  enqueueOrConsolidateLogBookOp,
+  getQueuedOp,
   getQueue,
   isOnline,
   readCache,
+  updateQueuedOp,
   writeCache,
   type QueuedOp,
+  type EnqueueOpInput,
 } from './offline';
 
 import type {
@@ -34,13 +42,16 @@ import type {
   NewLogBookEntry,
   NewOverloadAlert,
   NewReliabilityIndex,
+  NotificationClass,
   OverloadAlert,
+  OperationalEntryMode,
   PeakLoadReading,
   PushToken,
   ReliabilityIndex,
   Station,
 } from '@/types';
 import type { AppRole } from '@/security/permissions';
+import { isQueueSyncAuthorized } from './syncAuthorization';
 export type { AppRole } from '@/security/permissions';
 
 export type MyProfile = {
@@ -51,6 +62,15 @@ export type MyProfile = {
   account_active: boolean;
   assigned_offices: string[];
   accessible_stations: string[];
+};
+
+export type DesktopIdentity = {
+  full_name: string;
+  employee_code: string | null;
+  designation: string | null;
+  account_role: string;
+  assigned_offices: string[];
+  accessible_station_count: number;
 };
 
 export type NotificationDevice = {
@@ -71,6 +91,12 @@ export type ParameterAlert = {
   max_value: number | null;
   breach_type: 'BELOW_MIN' | 'ABOVE_MAX';
   triggered_at: string;
+  notification_class: NotificationClass | null;
+  source_entry_mode: OperationalEntryMode | null;
+  source_recorded_at: string | null;
+  source_synced_at: string | null;
+  is_current: boolean;
+  notification_suppressed: boolean;
 };
 
 export type OrgUnitType = { unit_type: string; hierarchy_rank: number };
@@ -338,6 +364,12 @@ export type NewInterruptionPayload = {
 
   duration_minutes?: number | null;
   etr?: string | null;
+
+  entry_mode?: OperationalEntryMode | null;
+  recorded_at?: string | null;
+  synced_at?: string | null;
+  client_operation_id?: string | null;
+  restore_client_operation_id?: string | null;
 };
 
 /* =========================================================
@@ -602,12 +634,14 @@ async function restPatch<T>(
       string
     >,
   body: unknown,
-  cacheKey: string
+  cacheKey: string,
+  queueMetadata?: Partial<Pick<EnqueueOpInput, 'operationType' | 'eventTime' | 'recordedAt' | 'entryMode' | 'localEntityId' | 'serverEntityId' | 'dependsOn'>>
 ): Promise<T> {
   if (
     !isOnline()
   ) {
-    enqueueOp({
+    const enqueue = table === 'log_book_entries' ? enqueueOrConsolidateLogBookOp : enqueueOp;
+    await enqueue({
       method:
         'PATCH',
 
@@ -616,6 +650,10 @@ async function restPatch<T>(
       filter,
 
       body,
+
+      ownerUserId: await getQueueOwnerUserId(),
+
+      ...queueMetadata,
     });
 
     return body as T;
@@ -711,18 +749,24 @@ async function restPatch<T>(
 async function restPost<T>(
   table: string,
   body: unknown,
-  cacheKey: string
+  cacheKey: string,
+  queueMetadata?: Partial<Pick<EnqueueOpInput, 'operationType' | 'eventTime' | 'recordedAt' | 'entryMode' | 'localEntityId' | 'serverEntityId' | 'dependsOn'>>
 ): Promise<T> {
   if (
     !isOnline()
   ) {
-    enqueueOp({
+    const enqueue = table === 'log_book_entries' ? enqueueOrConsolidateLogBookOp : enqueueOp;
+    await enqueue({
       method:
         'POST',
 
       table,
 
       body,
+
+      ownerUserId: await getQueueOwnerUserId(),
+
+      ...queueMetadata,
     });
 
     return body as T;
@@ -1066,6 +1110,21 @@ async getLoadAnalysisFeederDailyProfile(
     };
   },
 
+  async getMyDesktopIdentity(): Promise<DesktopIdentity> {
+    const { data, error } = await supabase.rpc('get_my_desktop_identity').maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('Your desktop identity could not be loaded.');
+    const row = data as Record<string, unknown>;
+    return {
+      full_name: String(row.full_name ?? ''),
+      employee_code: row.employee_code == null ? null : String(row.employee_code),
+      designation: row.designation == null ? null : String(row.designation),
+      account_role: String(row.account_role ?? ''),
+      assigned_offices: Array.isArray(row.assigned_offices) ? row.assigned_offices.map(String) : [],
+      accessible_station_count: Number(row.accessible_station_count ?? 0),
+    };
+  },
+
   async updateMyProfile({ fullName, phone }: { fullName: string; phone: string | null }): Promise<Pick<MyProfile, 'full_name' | 'phone'>> {
     const { data: userData, error: userError } = await supabase.auth.getUser();
     if (userError) throw userError;
@@ -1183,6 +1242,10 @@ async getLoadAnalysisFeederDailyProfile(
   },
   async inviteUser(input: { fullName: string; employeeCode: string | null; email: string; phone: string | null; role: AppRole; officeIds: string[]; stationIds: string[]; reason: string | null }): Promise<void> {
     const { error } = await supabase.functions.invoke('invite-user', { body: { fullName: input.fullName, employeeCode: input.employeeCode, email: input.email, phone: input.phone, role: input.role, officeIds: input.officeIds, stationIds: input.stationIds, reason: input.reason } }); if (error) throw error;
+  },
+  async resendSetupEmail(targetUserId: string): Promise<void> {
+    const { error } = await supabase.functions.invoke('resend-setup-email', { body: { targetUserId } });
+    if (error) throw error;
   },
   async getFeederThresholdsPage(input: { search: string; stationId: string | null; feederId: string | null; parameterCode: string | null; feederActive: boolean | null; page: number; pageSize: number }): Promise<{ rows: FeederThresholdRow[]; total: number }> { const { data, error } = await supabase.rpc('get_feeder_thresholds_page', { p_search: input.search || null, p_station_id: input.stationId, p_feeder_id: input.feederId, p_parameter_code: input.parameterCode, p_feeder_active: input.feederActive, p_page: input.page, p_page_size: input.pageSize }); if (error) throw error; const rows = (data ?? []).map((row: Record<string, unknown>): FeederThresholdRow => ({ id: String(row.id), station_id: String(row.station_id), station_name: String(row.station_name), feeder_id: String(row.feeder_id), feeder_name: String(row.feeder_name), parameter_code: String(row.parameter_code), min_value: row.min_value == null ? null : Number(row.min_value), max_value: row.max_value == null ? null : Number(row.max_value), feeder_active: Boolean(row.feeder_active), updated_at: String(row.updated_at), updated_by_name: row.updated_by_name == null ? null : String(row.updated_by_name) })); return { rows, total: rows.length ? Number((data?.[0] as Record<string, unknown>).total_count) : 0 }; },
   async getThresholdScopeOptions(): Promise<ThresholdScopeOption[]> { const { data, error } = await supabase.rpc('get_threshold_scope_options'); if (error) throw error; return (data ?? []).map((row: Record<string, unknown>) => ({ kind: String(row.kind) as ThresholdScopeOption['kind'], id: String(row.id), name: String(row.name), station_id: String(row.station_id), station_name: String(row.station_name) })); },
@@ -2045,32 +2108,20 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
         string,
         unknown
       >
-  ) {
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from(
-          'log_book_entries'
-        )
-        .update(
-          row
-        )
-        .eq(
-          'id',
-          id
-        )
-        .select()
-        .single();
-
-    if (
-      error
-    ) {
-      throw error;
-    }
-
-    return data;
+  ): Promise<LogBookEntry> {
+    const eventTime = typeof row.actual_event_time === 'string' ? row.actual_event_time : undefined;
+    return restPatch<LogBookEntry>(
+      'log_book_entries',
+      { id },
+      row,
+      'logbook:all',
+      {
+        operationType: 'UPDATE_LOG_ENTRY',
+        eventTime,
+        recordedAt: Date.now(),
+        entryMode: 'OFFLINE',
+      }
+    );
   },
 
   /* =======================================================
@@ -2319,7 +2370,11 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
       string,
 
     status?:
-      InterruptionStatus
+      InterruptionStatus,
+
+    startIso?: string,
+
+    endIso?: string
   ): Promise<
     Interruption[]
   > {
@@ -2346,6 +2401,14 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
       );
     }
 
+    if (startIso) {
+      filters.push(`interruption_start=gte.${encodeURIComponent(startIso)}`);
+    }
+
+    if (endIso) {
+      filters.push(`interruption_start=lt.${encodeURIComponent(endIso)}`);
+    }
+
     filters.push(
       'order=interruption_start.desc'
     );
@@ -2368,7 +2431,7 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
       }:${
         status ??
         'all'
-      }`
+      }:${startIso ?? 'all'}:${endIso ?? 'all'}`
     );
   },
 
@@ -2394,6 +2457,16 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
         null,
     };
 
+    if (!isOnline()) {
+      const queued = await enqueueInterruptionAdd(body, body.interruption_start, await getQueueOwnerUserId());
+      return {
+        ...body,
+        id: queued.localEntityId as string,
+        duration_minutes: row.duration_minutes ?? null,
+        etr: row.etr ?? null,
+      } as Interruption;
+    }
+
     return restPost<
       Interruption
     >(
@@ -2414,10 +2487,38 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
       string,
 
     restoreTime:
+      string,
+
+    localEntityId?:
       string
   ): Promise<
     Interruption
   > {
+    if (!isOnline() && localEntityId?.startsWith('local:int:')) {
+      await enqueueInterruptionRestore({
+        body: {
+          interruption_end: restoreTime,
+          current_status: 'RESTORED',
+        },
+        eventTime: restoreTime,
+        localEntityId,
+        ownerUserId: await getQueueOwnerUserId(),
+      });
+      return {
+        id: localEntityId,
+        station_id: '',
+        feeder_id: null,
+        operator_id: null,
+        interruption_start: restoreTime,
+        interruption_end: restoreTime,
+        duration_minutes: null,
+        cause: null,
+        remarks: null,
+        current_status: 'RESTORED',
+        etr: null,
+      };
+    }
+
     return restPatch<
       Interruption
     >(
@@ -2435,7 +2536,15 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
           'RESTORED',
       },
 
-      'interruptions:all:all'
+      'interruptions:all:all',
+
+      {
+        operationType: 'RESTORE_INTERRUPTION',
+        eventTime: restoreTime,
+        recordedAt: Date.now(),
+        entryMode: 'OFFLINE',
+        serverEntityId: id,
+      }
     );
   },
 
@@ -2628,15 +2737,25 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
   },
 
   async getParameterAlerts(
-    stationId?: string
+    stationId?: string,
+    startIso?: string,
+    endIso?: string
   ): Promise<ParameterAlert[]> {
     let query = supabase
       .from('parameter_alerts')
-      .select('id,station_id,feeder_id,parameter_code,actual_value,min_value,max_value,breach_type,triggered_at,feeders(name)')
+      .select('id,station_id,feeder_id,parameter_code,actual_value,min_value,max_value,breach_type,triggered_at,notification_class,source_entry_mode,source_recorded_at,source_synced_at,is_current,notification_suppressed,feeders(name)')
       .order('triggered_at', { ascending: false });
 
     if (stationId) {
       query = query.eq('station_id', stationId);
+    }
+
+    if (startIso) {
+      query = query.gte('triggered_at', startIso);
+    }
+
+    if (endIso) {
+      query = query.lt('triggered_at', endIso);
     }
 
     const { data, error } = await query;
@@ -2655,6 +2774,12 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
         max_value: row.max_value === null ? null : Number(row.max_value),
         breach_type: row.breach_type as 'BELOW_MIN' | 'ABOVE_MAX',
         triggered_at: row.triggered_at,
+        notification_class: row.notification_class as NotificationClass | null,
+        source_entry_mode: row.source_entry_mode as OperationalEntryMode | null,
+        source_recorded_at: row.source_recorded_at,
+        source_synced_at: row.source_synced_at,
+        is_current: row.is_current,
+        notification_suppressed: row.notification_suppressed,
       };
     });
   },
@@ -2828,7 +2953,14 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
 
       row,
 
-      `logbook:${row.station_id}`
+      `logbook:${row.station_id}`,
+
+      {
+        operationType: 'ADD_LOG_ENTRY',
+        eventTime: row.actual_event_time,
+        recordedAt: Date.now(),
+        entryMode: 'OFFLINE',
+      }
     );
   },
 
@@ -2904,13 +3036,25 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
    OFFLINE QUEUE FLUSHER
 ========================================================= */
 
-export async function flushQueue():
+let activeFlush: Promise<{ ok: number; failed: number }> | null = null;
+
+export function flushQueue(): Promise<{ ok: number; failed: number }> {
+  if (!activeFlush) {
+    activeFlush = flushQueueInternal().finally(() => { activeFlush = null; });
+  }
+  return activeFlush;
+}
+
+async function flushQueueInternal():
   Promise<{
     ok: number;
     failed: number;
   }> {
-  const queue =
-    getQueue();
+  const ownerUserId = await getQueueOwnerUserId();
+  if (!isQueueSyncAuthorized(ownerUserId)) {
+    throw new Error('GridVision access must be revalidated online before pending changes can sync.');
+  }
+  const queue = await getQueue(ownerUserId);
 
   let ok =
     0;
@@ -2922,25 +3066,65 @@ export async function flushQueue():
     const op of
     queue
   ) {
+    const currentOp = await getQueuedOp(op.id, ownerUserId);
+    if (!currentOp) continue;
+
+    const historicalRestore = currentOp.operationType === 'ADD_INTERRUPTION'
+      ? (await getQueue(ownerUserId)).find((candidate) =>
+          candidate.operationType === 'RESTORE_INTERRUPTION'
+          && candidate.table === 'interruptions'
+          && candidate.dependsOn?.includes(currentOp.id))
+      : undefined;
+
+    if (historicalRestore) {
+      try {
+        await runHistoricalInterruptionPair(currentOp, historicalRestore);
+        await dequeueOps([currentOp.id, historicalRestore.id]);
+        ok += 2;
+      } catch (cause) {
+        failed += 2;
+        for (const failedOp of [currentOp, historicalRestore]) {
+          try {
+            await updateQueuedOp(failedOp.id, {
+              retryCount: failedOp.retryCount + 1,
+              lastError: safeQueuedOperationError(cause),
+            });
+          } catch {
+            /* Both operations remain queued if diagnostic persistence fails. */
+          }
+        }
+      }
+      continue;
+    }
+
+    if (currentOp.dependsOn && (await Promise.all(currentOp.dependsOn.map((dependency) => getQueuedOp(dependency, ownerUserId)))).some(Boolean)) continue;
+
     try {
-      await runQueued(
-        op
+      const replayResult = await runQueued(
+        currentOp
       );
 
-      dequeueOp(
-        op.id
-      );
+      if (currentOp.operationType === 'ADD_INTERRUPTION') {
+        if (!replayResult.serverEntityId) throw new Error('Interruption replay succeeded without a server record identifier.');
+        await completeQueuedInterruptionAdd(currentOp.id, replayResult.serverEntityId);
+      } else {
+        await dequeueOp(currentOp.id);
+      }
 
       ok +=
         1;
-    } catch {
+    } catch (cause) {
       failed +=
         1;
 
-      /*
-       * Leave operation in queue
-       * for the next replay attempt.
-       */
+      try {
+        await updateQueuedOp(currentOp.id, {
+          retryCount: currentOp.retryCount + 1,
+          lastError: safeQueuedOperationError(cause),
+        });
+      } catch {
+        /* The operation remains queued if diagnostic persistence fails. */
+      }
     }
   }
 
@@ -2950,6 +3134,60 @@ export async function flushQueue():
   };
 }
 
+async function getQueueOwnerUserId(): Promise<string> {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  const userId = data.session?.user.id;
+  if (!userId) throw new Error('An authenticated session is required to save offline operations.');
+  return userId;
+}
+
+function queuedBody(op: QueuedOp): Record<string, unknown> {
+  if (!op.body || typeof op.body !== 'object' || Array.isArray(op.body)) {
+    throw new Error('Invalid queued interruption data.');
+  }
+  return op.body as Record<string, unknown>;
+}
+
+function requiredQueuedString(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`Missing queued interruption ${key}.`);
+  return value;
+}
+
+async function runHistoricalInterruptionPair(addOp: QueuedOp, restoreOp: QueuedOp): Promise<string> {
+  const add = queuedBody(addOp);
+  const restore = queuedBody(restoreOp);
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${REST_URL}/rpc/sync_historical_interruption`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      p_station_id: requiredQueuedString(add, 'station_id'),
+      p_feeder_id: requiredQueuedString(add, 'feeder_id'),
+      p_interruption_start: requiredQueuedString(add, 'interruption_start'),
+      p_interruption_end: requiredQueuedString(restore, 'interruption_end'),
+      p_cause: typeof add.cause === 'string' ? add.cause : null,
+      p_remarks: typeof add.remarks === 'string' ? add.remarks : null,
+      p_etr: typeof add.etr === 'string' ? add.etr : null,
+      p_add_recorded_at: new Date(addOp.recordedAt).toISOString(),
+      p_restore_recorded_at: new Date(restoreOp.recordedAt).toISOString(),
+      p_add_client_operation_id: addOp.clientOperationId,
+      p_restore_client_operation_id: restoreOp.clientOperationId,
+    }),
+  });
+  if (!response.ok) throw await readQueuedReplayError(response);
+  const id = await response.json() as unknown;
+  if (typeof id !== 'string' || !id) throw new Error('Historical interruption sync returned no server identifier.');
+  return id;
+}
+
+function safeQueuedOperationError(cause: unknown): string {
+  if (!(cause instanceof Error)) return 'Replay failed. The operation will be retried.';
+  const status = cause.message.match(/HTTP\s+(\d{3})/i)?.[1];
+  return status ? `Replay failed with HTTP ${status}.` : 'Replay failed. The operation will be retried.';
+}
+
 /* =========================================================
    RUN QUEUED OPERATION
 ========================================================= */
@@ -2957,7 +3195,11 @@ export async function flushQueue():
 async function runQueued(
   op:
     QueuedOp
-): Promise<void> {
+): Promise<{ serverEntityId?: string }> {
+  if (op.operationType === 'RESTORE_INTERRUPTION' && !op.filter?.id) {
+    throw new Error('Pending interruption restore is waiting for its server record.');
+  }
+
   const qs =
     op.filter
       ? Object.entries(
@@ -2985,6 +3227,9 @@ async function runQueued(
   const headers =
     await getAuthHeaders();
 
+  const replayBody =
+    await buildQueuedReplayBody(op);
+
   const res =
     await fetch(
       url,
@@ -3000,9 +3245,9 @@ async function runQueued(
         },
 
         body:
-          op.body
+          replayBody
             ? JSON.stringify(
-                op.body
+                replayBody
               )
             : undefined,
       }
@@ -3011,11 +3256,107 @@ async function runQueued(
   if (
     !res.ok
   ) {
-    const errorText =
-      await res.text();
-
-    throw new Error(
-      `${op.method} ${op.table} replay failed: ${res.status} ${errorText}`
-    );
+    const replayError = await readQueuedReplayError(res);
+    const existingServerId = await confirmedClientOperationDuplicateId(op, replayError);
+    if (existingServerId) return { serverEntityId: existingServerId };
+    throw replayError;
   }
+
+  if (op.operationType === 'ADD_INTERRUPTION') {
+    const rows = await res.json() as Array<{ id?: unknown }>;
+    const serverEntityId = Array.isArray(rows) && typeof rows[0]?.id === 'string' ? rows[0].id : undefined;
+    return { serverEntityId };
+  }
+
+  return {};
+}
+
+const IDEMPOTENT_OPERATION_TABLES = new Set(['log_book_entries', 'interruptions']);
+
+type PostgrestErrorBody = {
+  code?: string;
+};
+
+class QueuedReplayError extends Error {
+  constructor(readonly status: number, readonly postgresCode: string | null) {
+    super(`Queued operation replay failed with HTTP ${status}`);
+    this.name = 'QueuedReplayError';
+  }
+}
+
+async function buildQueuedReplayBody(op: QueuedOp): Promise<unknown> {
+  if (!IDEMPOTENT_OPERATION_TABLES.has(op.table) || (op.method !== 'POST' && op.method !== 'PATCH')) return op.body;
+  if (!op.body || typeof op.body !== 'object' || Array.isArray(op.body)) return op.body;
+
+  const operationIdentity = op.table === 'interruptions' && op.operationType === 'RESTORE_INTERRUPTION'
+    ? { restore_client_operation_id: op.clientOperationId }
+    : { client_operation_id: op.clientOperationId };
+
+  const parameterSequence = op.table === 'log_book_entries'
+    ? { offline_sequence_final: !(await hasLaterQueuedLogBookReading(op)) }
+    : {};
+
+  return {
+    ...(op.body as Record<string, unknown>),
+    entry_mode: 'OFFLINE',
+    recorded_at: new Date(op.recordedAt).toISOString(),
+    synced_at: new Date().toISOString(),
+    ...operationIdentity,
+    ...parameterSequence,
+  };
+}
+
+async function hasLaterQueuedLogBookReading(op: QueuedOp): Promise<boolean> {
+  if (!op.body || typeof op.body !== 'object' || Array.isArray(op.body)) return false;
+  const body = op.body as Record<string, unknown>;
+  const stationId = typeof body.station_id === 'string' ? body.station_id : null;
+  const feederId = typeof body.feeder_id === 'string' ? body.feeder_id : null;
+  const eventTime = typeof body.actual_event_time === 'string' ? body.actual_event_time : op.eventTime;
+  if (!stationId || !feederId || !eventTime) return false;
+  const eventMillis = Date.parse(eventTime);
+  if (!Number.isFinite(eventMillis)) return false;
+
+  return (await getQueue(op.ownerUserId)).some((candidate) => {
+    if (candidate.id === op.id || candidate.table !== 'log_book_entries') return false;
+    if (!candidate.body || typeof candidate.body !== 'object' || Array.isArray(candidate.body)) return false;
+    const queued = candidate.body as Record<string, unknown>;
+    const queuedTime = typeof queued.actual_event_time === 'string' ? queued.actual_event_time : candidate.eventTime;
+    return queued.station_id === stationId
+      && queued.feeder_id === feederId
+      && typeof queuedTime === 'string'
+      && Date.parse(queuedTime) > eventMillis;
+  });
+}
+
+async function readQueuedReplayError(response: Response): Promise<QueuedReplayError> {
+  let body: PostgrestErrorBody | null = null;
+  try {
+    body = await response.json() as PostgrestErrorBody;
+  } catch {
+    // Non-JSON failures remain ordinary retryable replay errors.
+  }
+  return new QueuedReplayError(response.status, typeof body?.code === 'string' ? body.code : null);
+}
+
+async function confirmedClientOperationDuplicateId(op: QueuedOp, error: QueuedReplayError): Promise<string | null> {
+  if (error.status !== 409 || error.postgresCode !== '23505') return null;
+  if (!IDEMPOTENT_OPERATION_TABLES.has(op.table) || !op.clientOperationId) return null;
+  const identityColumn = op.table === 'interruptions' && op.operationType === 'RESTORE_INTERRUPTION'
+    ? 'restore_client_operation_id'
+    : 'client_operation_id';
+  return findByClientOperationId(op.table as 'log_book_entries' | 'interruptions', identityColumn, op.clientOperationId);
+}
+
+async function findByClientOperationId(
+  table: 'log_book_entries' | 'interruptions',
+  identityColumn: 'client_operation_id' | 'restore_client_operation_id',
+  clientOperationId: string
+): Promise<string | null> {
+  const headers = await getAuthHeaders();
+  const query = `${identityColumn}=eq.${encodeURIComponent(clientOperationId)}&select=id&limit=1`;
+  const response = await fetch(`${REST_URL}/${table}?${query}`, { method: 'GET', headers });
+  if (!response.ok) return null;
+  const rows = await response.json() as Array<{ id?: unknown }>;
+  const id = Array.isArray(rows) ? rows.find((row) => typeof row.id === 'string')?.id : undefined;
+  return typeof id === 'string' ? id : null;
 }

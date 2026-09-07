@@ -8,6 +8,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 // first-password setup even when an older invitation redirect omitted ?invite=1.
 const callbackHashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
 export const hasSupabaseInviteCallback = callbackHashParams.get('type') === 'invite';
+export const hasSupabaseRecoveryCallback = callbackHashParams.get('type') === 'recovery';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error(

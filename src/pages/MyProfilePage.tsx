@@ -6,6 +6,7 @@ import { supabase } from '@/services/supabase';
 import { useSettings } from '@/hooks/useSettings';
 import { getRoleLabel, type AppRole } from '@/security/permissions';
 import { AppHeader, PageBody, Screen } from '@/components/ui/Page';
+import { DesktopPageHeading } from '@/components/layout/DesktopPageHeading';
 
 function initials(value: string) {
   return value.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'GV';
@@ -81,10 +82,14 @@ export function MyProfilePage({ user, role, onBack }: { user: User; role: AppRol
 
   const updateNotifications = async () => {
     setDeviceError(null);
-    if (settings.notificationsEnabled) { disableNotifications(); return; }
-    const permission = await requestNotificationPermission();
-    if (permission !== 'granted') setDeviceError('Notification permission was not granted.');
-    else void load();
+    try {
+      if (settings.notificationsEnabled) { await disableNotifications(); await load(); return; }
+      const permission = await requestNotificationPermission();
+      if (permission !== 'granted') setDeviceError('Notification permission was not granted.');
+      else await load();
+    } catch (cause) {
+      setDeviceError(cause instanceof Error ? cause.message : 'Could not update notifications on this device.');
+    }
   };
 
   const deactivateDevice = async (id: string) => {
@@ -94,8 +99,9 @@ export function MyProfilePage({ user, role, onBack }: { user: User; role: AppRol
     finally { setDeviceBusyId(null); }
   };
 
-  return <Screen>
-    <AppHeader title="My Profile" subtitle="Personal account and notification settings" onBack={onBack} className="bg-gradient-to-r from-[#0D47A1] to-[#1565C0]" />
+  return <Screen showStatusBar={false}>
+    <AppHeader title="My Profile" onBack={onBack} prominent className="rounded-b-[22px] bg-gradient-to-br from-[#0D47A1] to-[#1565C0] shadow-md lg:hidden" />
+    <DesktopPageHeading title="My Profile" subtitle="Account, access and device preferences" />
     <PageBody>
       {loading && !profile ? <div className="grid min-h-60 place-items-center rounded-2xl bg-white"><Loader2 className="h-6 w-6 animate-spin text-blue-600" /></div> : loadError && !profile ? <EmptyMessage message={loadError} onRetry={() => void load()} /> : <div className="space-y-4">
         <section className="rounded-2xl bg-white p-4 shadow-sm"><div className="flex items-center gap-3">{user.user_metadata?.avatar_url ? <img src={user.user_metadata.avatar_url as string} alt="Profile" className="h-16 w-16 rounded-full object-cover" /> : <span className="grid h-16 w-16 place-items-center rounded-full bg-blue-700 text-lg font-bold text-white">{initials(displayName)}</span>}<div className="min-w-0 flex-1"><h2 className="truncate text-lg font-bold text-slate-900">{displayName}</h2><p className="mt-0.5 text-sm text-blue-700">{getRoleLabel(profile?.account_role as AppRole ?? role)}</p><span className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${profile?.account_active === false ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}><CheckCircle2 className="h-3.5 w-3.5" />{profile?.account_active === false ? 'Inactive' : 'Active'}</span></div></div></section>

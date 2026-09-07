@@ -14,12 +14,21 @@ import {
   RotateCcw,
   AlertTriangle,
   CheckCircle2,
+  Cloud,
+  CloudOff,
+  UploadCloud,
   X,
 } from 'lucide-react';
 
 import { api } from '@/services/api';
 import { supabase } from '@/services/supabase';
 import { useApp } from '@/context/AppContext';
+import {
+  getQueuedInterruptionOperations,
+  isOnline as hasNetworkConnection,
+  OFFLINE_QUEUE_CHANGED_EVENT,
+  type QueuedOp,
+} from '@/services/offline';
 
 import type {
   Feeder,
@@ -61,6 +70,11 @@ type DbInterruption = Interruption & {
 
   duration_minutes?: number | null;
   etr?: string | null;
+};
+
+type VisibleInterruption = Interruption & {
+  syncStatus?: 'SYNCED' | 'PENDING' | 'FAILED';
+  queuedOperation?: QueuedOp;
 };
 
 /* =========================================================
@@ -175,6 +189,10 @@ export function InterruptionEntryPage({
 }) {
   const {
     stations,
+    feeders: authorizedFeeders,
+    online,
+    pending,
+    error: stationScopeError,
   } = useApp();
 
   /* =======================================================
@@ -251,11 +269,13 @@ export function InterruptionEntryPage({
   ======================================================= */
 
   const [
-    openInterruptions,
-    setOpenInterruptions,
+    serverOpenInterruptions,
+    setServerOpenInterruptions,
   ] = useState<
     Interruption[]
   >([]);
+
+  const [queueRevision, setQueueRevision] = useState(0);
 
   const [
     loading,
@@ -337,6 +357,23 @@ export function InterruptionEntryPage({
       );
 
       try {
+        if (!hasNetworkConnection()) {
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError) throw sessionError;
+          const user = sessionData.session?.user;
+          if (!user) throw new Error('No authenticated operator found.');
+          const cachedStation = stations[0];
+          if (!cachedStation) throw new Error('Offline operational scope is unavailable. Connect once to refresh your authorized station and feeders.');
+          if (cancelled) return;
+
+          setOperatorUserId(user.id);
+          setOperatorStationId(cachedStation.id);
+          setOperatorStationName(cachedStation.name);
+          setStationFeeders(authorizedFeeders.filter((feeder) => feeder.station_id === cachedStation.id));
+          setFeederId('');
+          return;
+        }
+
         const {
           data: {
             user,
@@ -563,7 +600,15 @@ export function InterruptionEntryPage({
     };
   }, [
     stations,
+    authorizedFeeders,
+    online,
   ]);
+
+  useEffect(() => {
+    const refreshQueue = () => setQueueRevision((revision) => revision + 1);
+    window.addEventListener(OFFLINE_QUEUE_CHANGED_EVENT, refreshQueue);
+    return () => window.removeEventListener(OFFLINE_QUEUE_CHANGED_EVENT, refreshQueue);
+  }, []);
 
   /* =======================================================
      FEEDER LOOKUP
@@ -603,6 +648,65 @@ export function InterruptionEntryPage({
         feederId,
       ]
     );
+
+  const [queuedInterruptionOps, setQueuedInterruptionOps] = useState<QueuedOp[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!operatorUserId) {
+      setQueuedInterruptionOps([]);
+      return () => { cancelled = true; };
+    }
+    void getQueuedInterruptionOperations(operatorUserId).then((operations) => {
+      if (!cancelled) setQueuedInterruptionOps(operations);
+    }).catch((cause) => {
+      if (!cancelled) {
+        setQueuedInterruptionOps([]);
+        setError(cause instanceof Error ? cause.message : 'Offline operational storage is unavailable.');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [operatorUserId, queueRevision, pending]);
+
+  const openInterruptions = useMemo<VisibleInterruption[]>(() => {
+    if (!operatorStationId) return [];
+    const restores = queuedInterruptionOps.filter((op) => op.operationType === 'RESTORE_INTERRUPTION');
+    const locallyRestoredIds = new Set(restores.map((op) => op.localEntityId).filter((id): id is string => Boolean(id)));
+    const serverRestoredIds = new Set(restores.map((op) => op.serverEntityId ?? op.filter?.id).filter((id): id is string => Boolean(id)));
+
+    const serverRows = serverOpenInterruptions
+      .filter((row) => !serverRestoredIds.has(row.id))
+      .map((row) => ({ ...row, syncStatus: 'SYNCED' as const }));
+
+    const localRows = queuedInterruptionOps
+      .filter((op) => op.operationType === 'ADD_INTERRUPTION' && op.localEntityId && !locallyRestoredIds.has(op.localEntityId))
+      .flatMap((op): VisibleInterruption[] => {
+        if (!op.body || typeof op.body !== 'object' || Array.isArray(op.body)) return [];
+        const body = op.body as Record<string, unknown>;
+        if (body.station_id !== operatorStationId || typeof body.feeder_id !== 'string' || typeof body.interruption_start !== 'string') return [];
+        return [{
+          id: op.localEntityId as string,
+          station_id: operatorStationId,
+          feeder_id: body.feeder_id,
+          operator_id: typeof body.operator_id === 'string' ? body.operator_id : null,
+          interruption_start: body.interruption_start,
+          interruption_end: null,
+          duration_minutes: null,
+          cause: typeof body.cause === 'string' ? body.cause : null,
+          remarks: typeof body.remarks === 'string' ? body.remarks : null,
+          current_status: 'OPEN',
+          etr: typeof body.etr === 'string' ? body.etr : null,
+          syncStatus: op.retryCount > 0 ? 'FAILED' : 'PENDING',
+          queuedOperation: op,
+        }];
+      });
+
+    const serverClientIds = new Set(serverRows.map((row) => row.client_operation_id).filter(Boolean));
+    return [...localRows.filter((row) => !serverClientIds.has(row.queuedOperation?.clientOperationId)), ...serverRows]
+      .sort((a, b) => +new Date(b.interruption_start) - +new Date(a.interruption_start));
+  }, [operatorStationId, queuedInterruptionOps, serverOpenInterruptions]);
+
+  const failedInterruptionChanges = queuedInterruptionOps.filter((op) => op.retryCount > 0).length;
 
   /* =======================================================
      OPEN FEEDER IDS
@@ -668,7 +772,7 @@ export function InterruptionEntryPage({
         if (
           !operatorStationId
         ) {
-          setOpenInterruptions(
+          setServerOpenInterruptions(
             []
           );
 
@@ -722,7 +826,7 @@ export function InterruptionEntryPage({
             }
           );
 
-          setOpenInterruptions(
+          setServerOpenInterruptions(
             rows
           );
         } catch (
@@ -754,6 +858,10 @@ export function InterruptionEntryPage({
   }, [
     loadOpenInterruptions,
   ]);
+
+  useEffect(() => {
+    if (online && queueRevision > 0) void loadOpenInterruptions();
+  }, [online, queueRevision, loadOpenInterruptions]);
 
   /* =======================================================
      AUTOMATIC CONFIRMATION POPUP
@@ -911,14 +1019,9 @@ export function InterruptionEntryPage({
           }
         );
 
-      setOpenInterruptions(
-        (
-          current
-        ) => [
-          created,
-          ...current,
-        ]
-      );
+      if (!created.id.startsWith('local:int:')) {
+        setServerOpenInterruptions((current) => [created, ...current]);
+      }
 
       setShowTripConfirmation(
         false
@@ -1026,10 +1129,11 @@ export function InterruptionEntryPage({
         selectedInterruption.id,
         localInputToISO(
           restoreTime
-        )
+        ),
+        selectedInterruption.id.startsWith('local:int:') ? selectedInterruption.id : undefined
       );
 
-      setOpenInterruptions(
+      setServerOpenInterruptions(
         (
           current
         ) =>
@@ -1090,6 +1194,7 @@ export function InterruptionEntryPage({
       ==================================================== */}
 
       <div
+        className="lg:!rounded-none lg:!border-b lg:!border-slate-200 lg:!bg-white lg:!text-slate-900 lg:!shadow-none"
         style={{
           background:
             'linear-gradient(135deg,#0D47A1,#1565C0)',
@@ -1133,7 +1238,7 @@ export function InterruptionEntryPage({
               onBack
             }
 
-            className="rounded-full p-1 transition hover:bg-white/10 active:scale-95"
+            className="rounded-full p-1 transition hover:bg-white/10 active:scale-95 lg:hidden"
 
             aria-label="Back"
           >
@@ -1167,6 +1272,7 @@ export function InterruptionEntryPage({
         </div>
 
         <div
+          className="lg:!border-slate-200 lg:!bg-slate-50"
           style={{
             marginTop:
               18,
@@ -1185,6 +1291,7 @@ export function InterruptionEntryPage({
           }}
         >
           <div
+            className="lg:!text-slate-500"
             style={{
               fontSize:
                 10,
@@ -1229,6 +1336,7 @@ export function InterruptionEntryPage({
       ==================================================== */}
 
       <div
+        className="lg:mx-auto lg:w-full lg:max-w-6xl lg:px-8"
         style={{
           flex:
             1,
@@ -1243,6 +1351,46 @@ export function InterruptionEntryPage({
             100,
         }}
       >
+        <div
+          role="status"
+          aria-live="polite"
+          className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold lg:ml-auto lg:max-w-xl ${
+            online
+              ? pending > 0
+                ? 'border-blue-200 bg-blue-50 text-blue-800'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-amber-200 bg-amber-50 text-amber-900'
+          }`}
+        >
+          {online ? (
+            pending > 0 ? <UploadCloud className="h-4 w-4 shrink-0" /> : <Cloud className="h-4 w-4 shrink-0" />
+          ) : (
+            <CloudOff className="h-4 w-4 shrink-0" />
+          )}
+          <span>
+            {online
+              ? pending > 0
+                ? `Online · ${pending} change${pending === 1 ? '' : 's'} pending sync`
+                : 'Online · All changes synced'
+              : pending > 0
+              ? `Offline · ${pending} interruption change${pending === 1 ? '' : 's'} pending sync`
+              : 'Offline · Interruption changes are saved on this device and will sync automatically.'}
+          </span>
+        </div>
+
+        {stationScopeError && (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-900">
+            {stationScopeError}
+          </div>
+        )}
+
+        {failedInterruptionChanges > 0 && (
+          <div role="alert" className="mb-3 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-semibold text-red-800">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Sync Failed · {failedInterruptionChanges} interruption change{failedInterruptionChanges === 1 ? '' : 's'} retained for retry.
+          </div>
+        )}
+
         {/* =================================================
             ERROR
         ================================================== */}
@@ -2411,6 +2559,30 @@ export function InterruptionEntryPage({
                               )
                             }
                           </p>
+
+                          <span
+                            className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold ${
+                              interruption.syncStatus === 'FAILED'
+                                ? 'bg-red-50 text-red-700'
+                                : interruption.syncStatus === 'PENDING'
+                                ? 'bg-amber-50 text-amber-800'
+                                : 'bg-emerald-50 text-emerald-700'
+                            }`}
+                            title={interruption.syncStatus === 'FAILED' ? interruption.queuedOperation?.lastError ?? 'This change will be retried.' : undefined}
+                          >
+                            {interruption.syncStatus === 'FAILED' ? (
+                              <AlertTriangle className="h-3 w-3" />
+                            ) : interruption.syncStatus === 'PENDING' ? (
+                              <UploadCloud className="h-3 w-3" />
+                            ) : (
+                              <CheckCircle2 className="h-3 w-3" />
+                            )}
+                            {interruption.syncStatus === 'FAILED'
+                              ? 'Sync Failed'
+                              : interruption.syncStatus === 'PENDING'
+                              ? 'Pending Sync'
+                              : 'Synced'}
+                          </span>
 
                           {getInterruptionRemarks(
                             interruption

@@ -2072,7 +2072,18 @@ export default function IndicesAnalysis() {
 
   return (
     <>
+      <style>{`
+        @media (min-width: 1024px) {
+          .gv-indices-grid {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            align-items: start;
+            gap: 20px !important;
+          }
+        }
+      `}</style>
       <div
+        className="gv-indices-grid"
         style={{
           display:
             "flex",
@@ -2114,6 +2125,7 @@ export default function IndicesAnalysis() {
             }
           >
             <select
+              aria-label="SAIDI station"
               value={
                 saidiStationId
               }
@@ -2327,6 +2339,7 @@ export default function IndicesAnalysis() {
             }
           >
             <select
+              aria-label="SAIFI station"
               value={
                 saifiStationId
               }
@@ -2652,6 +2665,7 @@ function PeriodSelect({
 
   return (
     <select
+      aria-label="Period"
       value={
         displayValue
       }
@@ -2726,6 +2740,9 @@ function CustomRangeButton({
   return (
     <button
       type="button"
+
+      data-pdf-filter-label="Custom date range"
+      data-pdf-filter-value={`${formatDate(range.startDate)} - ${formatDate(range.endDate)}`}
 
       onClick={
         onClick

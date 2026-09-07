@@ -17,11 +17,21 @@ import {
   Info,
   X,
   Clock3,
+  Cloud,
+  CloudOff,
+  UploadCloud,
+  AlertCircle,
 } from "lucide-react";
 
 import { api } from "@/services/api";
 import { supabase } from "@/services/supabase";
 import { useApp } from "@/context/AppContext";
+import {
+  getQueuedLogBookOp,
+  isOnline as hasNetworkConnection,
+  OFFLINE_QUEUE_CHANGED_EVENT,
+  type QueuedOp,
+} from "@/services/offline";
 
 /* =========================================================
    PARAMETERS
@@ -316,6 +326,23 @@ function emptyValues():
   };
 }
 
+function valuesFromEntry(entry: Record<string, unknown>): Record<string, string> {
+  const display = (value: unknown) => value === null || value === undefined ? "" : String(value);
+  return {
+    mw: display(entry.mw),
+    mvar: display(entry.mvar),
+    voltage: display(entry.voltage_kv),
+    current: display(entry.current_a),
+    powerFactor: display(entry.power_factor),
+    frequency: display(entry.frequency_hz),
+    temperature: display(entry.transformer_temp_c),
+    oilLevel: display(entry.oil_level_percent),
+    tapPosition: display(entry.tap_position),
+    weather: display(entry.weather),
+    remarks: display(entry.remarks),
+  };
+}
+
 /* =========================================================
    PAGE
 ========================================================= */
@@ -329,6 +356,9 @@ export function OperatorEntryPage({
     activeStationId,
     activeStation,
     activeFeeders,
+    online,
+    pending,
+    error: stationScopeError,
   } = useApp();
 
   /* =======================================================
@@ -426,6 +456,11 @@ export function OperatorEntryPage({
     false
   );
 
+  const [lastSaveStatus, setLastSaveStatus] = useState<"SYNCED" | "PENDING" | "SAVE_FAILED" | null>(null);
+  const [queuedEntry, setQueuedEntry] = useState<QueuedOp | null>(null);
+  const [loadedSlotKey, setLoadedSlotKey] = useState<string | null>(null);
+  const [queueRevision, setQueueRevision] = useState(0);
+
   const [
     error,
     setError,
@@ -509,14 +544,14 @@ export function OperatorEntryPage({
       false;
 
     async function loadUser() {
-      const {
-        data: {
-          user,
-        },
-        error:
-          userError,
-      } =
-        await supabase.auth.getUser();
+      const offlineSession = !hasNetworkConnection()
+        ? await supabase.auth.getSession()
+        : null;
+      const onlineUser = offlineSession
+        ? null
+        : await supabase.auth.getUser();
+      const user = offlineSession?.data.session?.user ?? onlineUser?.data.user ?? null;
+      const userError = offlineSession?.error ?? onlineUser?.error ?? null;
 
       if (
         cancelled
@@ -546,6 +581,12 @@ export function OperatorEntryPage({
       cancelled =
         true;
     };
+  }, []);
+
+  useEffect(() => {
+    const refreshQueuedEntry = () => setQueueRevision((revision) => revision + 1);
+    window.addEventListener(OFFLINE_QUEUE_CHANGED_EVENT, refreshQueuedEntry);
+    return () => window.removeEventListener(OFFLINE_QUEUE_CHANGED_EVENT, refreshQueuedEntry);
   }, []);
 
   /* =======================================================
@@ -626,15 +667,39 @@ export function OperatorEntryPage({
             emptyValues()
           );
 
+          setQueuedEntry(null);
+          setLoadedSlotKey(null);
+
+          return;
+        }
+
+        const actualEventTime = createActualEventTime(selectedDate, selectedHour);
+        const slotKey = `${activeStationId}:${feederId}:${actualEventTime}`;
+        const queued = operatorId
+          ? (await getQueuedLogBookOp(activeStationId, feederId, actualEventTime, operatorId)) ?? null
+          : null;
+        setQueuedEntry(queued);
+
+        if (queued?.body && typeof queued.body === "object" && !Array.isArray(queued.body)) {
+          setExistingEntryId(queued.method === "PATCH" ? queued.filter?.id ?? null : null);
+          setValues(valuesFromEntry(queued.body as Record<string, unknown>));
+          setLoadedSlotKey(slotKey);
+          setLoadingEntry(false);
+          return;
+        }
+
+        if (!online) {
+          if (loadedSlotKey !== slotKey) {
+            setExistingEntryId(null);
+            setValues(emptyValues());
+            setLoadedSlotKey(slotKey);
+          }
+          setLoadingEntry(false);
           return;
         }
 
         setLoadingEntry(
           true
-        );
-
-        setSaved(
-          false
         );
 
         setError(
@@ -667,6 +732,8 @@ export function OperatorEntryPage({
               emptyValues()
             );
 
+            setLoadedSlotKey(slotKey);
+
             return;
           }
 
@@ -677,88 +744,8 @@ export function OperatorEntryPage({
           setExistingEntryId(
             entry.id
           );
-
-          setValues({
-            mw:
-              entry.mw !==
-                null
-                ? String(
-                    entry.mw
-                  )
-                : "",
-
-            mvar:
-              entry.mvar !==
-                null
-                ? String(
-                    entry.mvar
-                  )
-                : "",
-
-            voltage:
-              entry.voltage_kv !==
-                null
-                ? String(
-                    entry.voltage_kv
-                  )
-                : "",
-
-            current:
-              entry.current_a !==
-                null
-                ? String(
-                    entry.current_a
-                  )
-                : "",
-
-            powerFactor:
-              entry.power_factor !==
-                null
-                ? String(
-                    entry.power_factor
-                  )
-                : "",
-
-            frequency:
-              entry.frequency_hz !==
-                null
-                ? String(
-                    entry.frequency_hz
-                  )
-                : "",
-
-            temperature:
-              entry.transformer_temp_c !==
-                null
-                ? String(
-                    entry.transformer_temp_c
-                  )
-                : "",
-
-            oilLevel:
-              entry.oil_level_percent !==
-                null
-                ? String(
-                    entry.oil_level_percent
-                  )
-                : "",
-
-            tapPosition:
-              entry.tap_position !==
-                null
-                ? String(
-                    entry.tap_position
-                  )
-                : "",
-
-            weather:
-              entry.weather ??
-              "",
-
-            remarks:
-              entry.remarks ??
-              "",
-          });
+          setValues(valuesFromEntry(entry as unknown as Record<string, unknown>));
+          setLoadedSlotKey(slotKey);
         } catch (e) {
           console.error(
             "Failed to load existing log-book entry:",
@@ -789,6 +776,9 @@ export function OperatorEntryPage({
         feederId,
         selectedDate,
         selectedHour,
+        online,
+        loadedSlotKey,
+        operatorId,
       ]
     );
 
@@ -796,6 +786,7 @@ export function OperatorEntryPage({
     void loadExistingEntry();
   }, [
     loadExistingEntry,
+    queueRevision,
   ]);
 
   /* =======================================================
@@ -893,6 +884,7 @@ export function OperatorEntryPage({
   allFeedersSavedMessage,
   setAllFeedersSavedMessage,
 ] = useState(false);
+  const [completionSavedOffline, setCompletionSavedOffline] = useState(false);
 
 
   /* =======================================================
@@ -1013,6 +1005,14 @@ const completed: HourStatus[] =
     }
   }
 
+  useEffect(() => {
+    if (!online) return;
+    if (calendarOpen) void loadMonthStatus();
+    if (hourModalOpen) void openHourStatus(statusDate);
+    // Queue events are the refresh signal; these existing queries remain authoritative.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, pending, queueRevision]);
+
   /* =======================================================
      CHOOSE HOUR FROM STATUS MODAL
   ======================================================= */
@@ -1061,9 +1061,11 @@ async function save() {
 
   setSaving(true);
   setSaved(false);
+  setLastSaveStatus(null);
   setError(null);
 
   try {
+    const savingOffline = !hasNetworkConnection();
     const actualEventTime =
       createActualEventTime(
         selectedDate,
@@ -1173,6 +1175,7 @@ async function save() {
     }
 
     setSaved(true);
+    setLastSaveStatus(savingOffline ? "PENDING" : "SYNCED");
 
     /* -----------------------------------------------
        FIND CURRENT FEEDER INDEX
@@ -1222,11 +1225,16 @@ async function save() {
     else if (
       isLastFeeder
     ) {
-      const hourRows =
-        await api.getOperatorDayHourStatus(
-          activeStationId,
-          selectedDate
-        );
+      if (savingOffline) {
+        setCompletionSavedOffline(true);
+        setAllFeedersSavedMessage(true);
+      } else {
+        setCompletionSavedOffline(false);
+        const hourRows =
+          await api.getOperatorDayHourStatus(
+            activeStationId,
+            selectedDate
+          );
 
 const selectedHourStatus =
   hourRows.find(
@@ -1240,13 +1248,14 @@ const selectedHourStatus =
       selectedHour
   );
 
-      if (
-        selectedHourStatus?.status ===
-        "FULL"
-      ) {
-        setAllFeedersSavedMessage(
-          true
-        );
+        if (
+          selectedHourStatus?.status ===
+          "FULL"
+        ) {
+          setAllFeedersSavedMessage(
+            true
+          );
+        }
       }
     }
 
@@ -1267,6 +1276,7 @@ const selectedHourStatus =
         ? e.message
         : "Failed to save operator entry."
     );
+    setLastSaveStatus("SAVE_FAILED");
   } finally {
     setSaving(false);
   }
@@ -1344,6 +1354,14 @@ const selectedHourStatus =
      UI
   ======================================================= */
 
+  const activeEntrySyncStatus = queuedEntry
+    ? queuedEntry.retryCount > 0
+      ? "FAILED"
+      : "PENDING"
+    : existingEntryId
+    ? "SYNCED"
+    : null;
+
   return (
     <div
       style={{
@@ -1365,6 +1383,7 @@ const selectedHourStatus =
       ================================================== */}
 
       <div
+        className="lg:!rounded-none lg:!border-b lg:!border-slate-200 lg:!bg-white lg:!text-slate-900 lg:!shadow-none"
         style={{
           background:
             "linear-gradient(135deg,#0D47A1,#1565C0)",
@@ -1408,7 +1427,7 @@ const selectedHourStatus =
             onClick={
               onBack
             }
-            className="rounded-full p-1 transition hover:bg-white/10 active:scale-95"
+            className="rounded-full p-1 transition hover:bg-white/10 active:scale-95 lg:hidden"
             aria-label="Back"
           >
             <ArrowLeft
@@ -1439,6 +1458,7 @@ const selectedHourStatus =
         {/* Station */}
 
         <div
+          className="lg:!border-slate-200 lg:!bg-slate-50"
           style={{
             marginTop:
               18,
@@ -1457,6 +1477,7 @@ const selectedHourStatus =
           }}
         >
           <div
+            className="lg:!text-slate-500"
             style={{
               fontSize:
                 10,
@@ -1492,6 +1513,7 @@ const selectedHourStatus =
             {activeStation?.name ??
               "Station not assigned"}
           </div>
+
         </div>
       </div>
 
@@ -1500,6 +1522,7 @@ const selectedHourStatus =
       ================================================== */}
 
       <div
+        className="lg:mx-auto lg:w-full lg:max-w-5xl lg:px-8"
         style={{
           flex:
             1,
@@ -1514,6 +1537,39 @@ const selectedHourStatus =
             100,
         }}
       >
+        <div
+          role="status"
+          aria-live="polite"
+          className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold lg:ml-auto lg:max-w-xl ${
+            online
+              ? pending > 0
+                ? "border-blue-200 bg-blue-50 text-blue-800"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-amber-200 bg-amber-50 text-amber-900"
+          }`}
+        >
+          {online ? (
+            pending > 0 ? <UploadCloud className="h-4 w-4 shrink-0" /> : <Cloud className="h-4 w-4 shrink-0" />
+          ) : (
+            <CloudOff className="h-4 w-4 shrink-0" />
+          )}
+          <span>
+            {online
+              ? pending > 0
+                ? `Online · ${pending} change${pending === 1 ? "" : "s"} pending sync`
+                : "Online · All changes synced"
+              : pending > 0
+              ? `Offline · ${pending} ${pending === 1 ? "entry" : "entries"} pending sync`
+              : "Offline · Entries will be saved on this device and synced automatically when connectivity returns."}
+          </span>
+        </div>
+
+        {stationScopeError && (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-900">
+            {stationScopeError}
+          </div>
+        )}
+
         {/* ERROR */}
 
         {error && (
@@ -2143,6 +2199,33 @@ const selectedHourStatus =
                   selectedHour
                 )}.`}
           </div>
+
+          {activeEntrySyncStatus && (
+            <div
+              role="status"
+              className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                activeEntrySyncStatus === "SYNCED"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : activeEntrySyncStatus === "PENDING"
+                  ? "bg-amber-50 text-amber-800"
+                  : "bg-red-50 text-red-700"
+              }`}
+              title={activeEntrySyncStatus === "FAILED" ? queuedEntry?.lastError ?? "This entry will be retried." : undefined}
+            >
+              {activeEntrySyncStatus === "SYNCED" ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : activeEntrySyncStatus === "PENDING" ? (
+                <UploadCloud className="h-3.5 w-3.5" />
+              ) : (
+                <AlertCircle className="h-3.5 w-3.5" />
+              )}
+              {activeEntrySyncStatus === "SYNCED"
+                ? "Synced"
+                : activeEntrySyncStatus === "PENDING"
+                ? "Pending Sync"
+                : "Sync Failed"}
+            </div>
+          )}
         </div>
 
         {/* =================================================
@@ -2435,7 +2518,7 @@ const selectedHourStatus =
 
             background:
               saved
-                ? "#059669"
+                ? lastSaveStatus === "PENDING" ? "#D97706" : "#059669"
                 : saving ||
                   loadingEntry ||
                   !feederId ||
@@ -2486,8 +2569,8 @@ const selectedHourStatus =
   </>
 ) : saved ? (
   <>
-    <CheckCircle2 size={18} />
-    Saved
+    {lastSaveStatus === "PENDING" ? <UploadCloud size={18} /> : <CheckCircle2 size={18} />}
+    {lastSaveStatus === "PENDING" ? "Pending Sync" : "Synced"}
   </>
 ) : (
   <>
@@ -2510,13 +2593,13 @@ const selectedHourStatus =
                 13,
 
               background:
-                "#ECFDF5",
+                lastSaveStatus === "PENDING" ? "#FFFBEB" : "#ECFDF5",
 
               border:
-                "1px solid #A7F3D0",
+                lastSaveStatus === "PENDING" ? "1px solid #FDE68A" : "1px solid #A7F3D0",
 
               color:
-                "#047857",
+                lastSaveStatus === "PENDING" ? "#92400E" : "#047857",
 
               display:
                 "flex",
@@ -2537,13 +2620,11 @@ const selectedHourStatus =
                 600,
             }}
           >
-            <CheckCircle2
-              size={
-                17
-              }
-            />
+            {lastSaveStatus === "PENDING" ? <UploadCloud size={17} /> : <CheckCircle2 size={17} />}
 
-            Hourly log-book data saved successfully.
+            {lastSaveStatus === "PENDING"
+              ? "Reading saved on this device and pending sync."
+              : "Hourly log-book data synced successfully."}
           </div>
         )}
       </div>
@@ -2590,7 +2671,7 @@ const selectedHourStatus =
           color: "#1E293B",
         }}
       >
-        Hourly Entry Complete
+        {completionSavedOffline ? "Reading Saved Locally" : "Hourly Entry Complete"}
       </h3>
 
       <p
@@ -2601,27 +2682,19 @@ const selectedHourStatus =
           color: "#64748B",
         }}
       >
-        Data for all feeders has been entered for
-        {" "}
-        <strong>
-          {selectedDate}
-        </strong>
-        {" at "}
-        <strong>
-          {hourValue(
-            selectedHour
-          )}
-        </strong>
-        .
+        {completionSavedOffline ? (
+          <>Reading saved locally. Final completion status will refresh after sync.</>
+        ) : (
+          <>Data for all feeders has been entered for <strong>{selectedDate}</strong> at <strong>{hourValue(selectedHour)}</strong>.</>
+        )}
       </p>
 
       <button
         type="button"
-        onClick={() =>
-          setAllFeedersSavedMessage(
-            false
-          )
-        }
+        onClick={() => {
+          setAllFeedersSavedMessage(false);
+          setCompletionSavedOffline(false);
+        }}
         style={{
           marginTop: 20,
           width: "100%",

@@ -52,6 +52,7 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [showPassword, setShowPassword] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [sendingRecovery, setSendingRecovery] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
 
@@ -82,19 +83,28 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     }
   };
 
-  const handleForgotPassword = async () => {
+  const handleRecoverySubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     const trimmedEmail = email.trim();
+    const passwordResetRedirectUrl = (import.meta.env.VITE_PASSWORD_RESET_REDIRECT_URL as string | undefined)?.trim();
     setError(null);
     setRecoveryMessage(null);
 
-    if (!trimmedEmail) {
-      setError('Enter your email address to receive password recovery instructions.');
+    if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
+      setError('Enter a valid email address to continue.');
+      return;
+    }
+
+    if (!passwordResetRedirectUrl) {
+      setError('Password recovery is not configured. Please contact your administrator.');
       return;
     }
 
     setSendingRecovery(true);
     try {
-      const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(trimmedEmail);
+      const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: passwordResetRedirectUrl,
+      });
       if (recoveryError) {
         throw recoveryError;
       }
@@ -110,7 +120,7 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   };
 
   return (
-    <main className="relative min-h-dvh overflow-x-hidden bg-gradient-to-br from-[#08244F] via-[#103F84] to-[#071A38] px-5 py-8 sm:px-6 sm:py-10">
+    <main className="relative min-h-dvh overflow-x-hidden bg-gradient-to-br from-[#08244F] via-[#103F84] to-[#071A38] px-5 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 opacity-[0.16]"
@@ -129,7 +139,7 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
         className="pointer-events-none absolute -bottom-28 right-[-8rem] h-72 w-72 rounded-full bg-blue-400/15 blur-3xl"
       />
 
-      <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-md flex-col justify-center py-3 sm:min-h-[calc(100dvh-5rem)]">
+      <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-md flex-col justify-center py-3 sm:min-h-[calc(100dvh-5rem)] lg:min-h-[calc(100dvh-6rem)] lg:max-w-[460px] lg:py-0">
         <header className="mb-7 text-center sm:mb-8">
           <div className="mx-auto flex h-[86px] w-[86px] items-center justify-center rounded-[26px] border border-cyan-100/30 bg-white/10 p-3 shadow-[0_18px_45px_rgba(3,24,61,0.34)] backdrop-blur-sm">
             <Logo size={62} title="GridVision" />
@@ -144,13 +154,13 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
         <section
           aria-label="Sign in"
-          aria-busy={signingIn}
+          aria-busy={isBusy}
           className="rounded-[28px] border border-white/65 bg-[#F5F7FA]/95 p-6 shadow-[0_24px_60px_rgba(3,24,61,0.28)] backdrop-blur-xl sm:p-8"
         >
           <div className="mb-6">
-            <h2 className="text-[25px] font-bold tracking-[-0.025em] text-slate-900">Sign in</h2>
+            <h2 className="text-[25px] font-bold tracking-[-0.025em] text-slate-900">{recoveryMode ? 'Reset password' : 'Sign in'}</h2>
             <p className="mt-1.5 text-sm leading-6 text-slate-600">
-              Use your organisation account to continue.
+              {recoveryMode ? 'Enter your registered email address to receive a password reset link.' : 'Use your organisation account to continue.'}
             </p>
           </div>
 
@@ -175,7 +185,7 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
             </div>
           )}
 
-          <form className="space-y-5" onSubmit={handleSubmit} noValidate>
+          <form className="space-y-5" onSubmit={recoveryMode ? handleRecoverySubmit : handleSubmit} noValidate>
             <div>
               <label htmlFor="sign-in-email" className="mb-2 block text-sm font-semibold text-slate-700">
                 Email address
@@ -203,7 +213,7 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               </div>
             </div>
 
-            <div>
+            {!recoveryMode && <div>
               <label htmlFor="sign-in-password" className="mb-2 block text-sm font-semibold text-slate-700">
                 Password
               </label>
@@ -234,28 +244,36 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                   {showPassword ? <EyeOff aria-hidden="true" className="h-5 w-5" /> : <Eye aria-hidden="true" className="h-5 w-5" />}
                 </button>
               </div>
-            </div>
+            </div>}
 
-            <div className="flex min-h-6 justify-end">
+            <div className={recoveryMode ? 'hidden' : 'flex min-h-6 justify-end'}>
               <button
                 type="button"
                 disabled={isBusy}
-                onClick={handleForgotPassword}
+                onClick={() => {
+                  setError(null);
+                  setRecoveryMessage(null);
+                  setRecoveryMode(true);
+                }}
                 className="min-h-10 rounded-lg px-1 text-sm font-semibold text-blue-700 transition hover:text-blue-900 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {sendingRecovery ? 'Sending recovery…' : 'Forgot password?'}
               </button>
             </div>
 
+            {recoveryMode && <button type="button" disabled={isBusy} onClick={() => { setError(null); setRecoveryMessage(null); setRecoveryMode(false); }} className="min-h-10 rounded-lg px-1 text-sm font-semibold text-blue-700 transition hover:text-blue-900 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50">Back to Sign In</button>}
+
             <button
               type="submit"
               disabled={isBusy}
               className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0B4CA8] to-[#1675D1] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(15,91,190,0.24)] transition hover:from-[#0A4292] hover:to-[#1267B9] focus:outline-none focus:ring-4 focus:ring-blue-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {signingIn ? (
+              {recoveryMode && sendingRecovery ? (
+                <><Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />Sending reset link...</>
+              ) : signingIn ? (
                 <><Loader2 aria-hidden="true" className="h-5 w-5 animate-spin" />Signing in…</>
               ) : (
-                <><KeyRound aria-hidden="true" className="h-5 w-5" />Sign in securely</>
+                <><KeyRound aria-hidden="true" className="h-5 w-5" />{recoveryMode ? 'Send reset link' : 'Sign in securely'}</>
               )}
             </button>
           </form>

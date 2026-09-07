@@ -172,13 +172,14 @@ export function InterruptionReportPage({ onBack }: { onBack: () => void }) {
       subtitle="Review events, restoration and outage duration"
       onBack={onBack}
       contentRef={contentRef}
-      actions={<ReportActions title="Interruption Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} />}
+      desktopWide
+      actions={<ReportActions title="Interruption Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
       filters={<ReportFilters values={filters} options={{
         stations, feeders, feederApplicable: true,
         statusOptions: [{ value: 'OPEN', label: 'Open' }, { value: 'RESTORED', label: 'Restored' }],
         causeOptions: causes.map((cause) => ({ value: cause, label: cause })),
         groupingOptions: [{ value: 'STATION', label: 'Station' }, { value: 'FEEDER', label: 'Feeder' }, { value: 'CAUSE', label: 'Cause' }],
-      }} generating={resource.loading} onChange={setFilters} onGenerate={generate} />}
+      }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
     >
       {loadedReport ? (
         <ReportPreview
@@ -192,6 +193,7 @@ export function InterruptionReportPage({ onBack }: { onBack: () => void }) {
           rowKey={(row) => row.id}
           onRetry={generate}
           pagination={{ page: loadedReport.page, pageSize: PAGE_SIZE, totalRows: loadedReport.total, onPageChange: changePage }}
+          desktopTable
         />
       ) : <div className="py-8 text-center text-sm text-slate-500">Select the scope and period, then generate the report.</div>}
 
