@@ -5,6 +5,7 @@ import {
   getReportPeriodDates,
   getReportPeriodLabel,
   getReportRangeIso,
+  loadAllReportRows,
   ReportActions,
   ReportFilters,
   ReportPageShell,
@@ -147,6 +148,14 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
   }, [summary]);
 
   const activeFilters = loadedReport?.filters ?? filters;
+  const loadAllRows = useCallback(async () => {
+    if (!loadedReport) return [];
+    const { startIso, endIso } = getReportRangeIso(loadedReport.filters);
+    return loadAllReportRows(loadedReport.total, (page, pageSize) => api.getLogBookReportPage(
+      startIso, endIso, stations.map((station) => station.id), page, pageSize,
+      loadedReport.filters.stationId || null, loadedReport.filters.feederId || null,
+    ));
+  }, [loadedReport, stations]);
   const selectedStation = activeFilters.stationId ? stationById.get(activeFilters.stationId)?.name ?? 'Selected station' : 'All accessible stations';
   const selectedFeeder = activeFilters.feederId ? feederById.get(activeFilters.feederId)?.name ?? 'Selected feeder' : 'All applicable feeders';
 
@@ -157,7 +166,7 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
       onBack={onBack}
       contentRef={contentRef}
       desktopWide
-      actions={<ReportActions title="Daily Log Book Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+      actions={<ReportActions title="Daily Log Book Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf totalRows={loadedReport?.total ?? resource.rows.length} loadAllRows={loadAllRows} />}
       filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: true }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
     >
       {loadedReport ? (

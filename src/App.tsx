@@ -10,7 +10,7 @@ import { canAccessRoute, getRoleLabel, type AppRole } from '@/security/permissio
 import { ResponsiveAppShell } from '@/components/layout/ResponsiveAppShell';
 import type { DesktopShellIdentity } from '@/components/layout/ResponsiveAppShell';
 import type { DesktopIdentity } from '@/services/api';
-import { addAndroidBackButtonListener, isAndroidApp, isNativeApp, minimizeAndroidApp } from '@/services/platform/runtime';
+import { addAndroidBackButtonListener, addNativeAppStateListener, APP_RESUMED_EVENT, isAndroidApp, isNativeApp, minimizeAndroidApp } from '@/services/platform/runtime';
 import { ExitAppConfirmationDialog } from '@/components/ExitAppConfirmationDialog';
 import { useApp } from '@/context/AppContext';
 import {
@@ -20,6 +20,9 @@ import {
   writeVerifiedApplicationIdentity,
 } from '@/services/verifiedIdentity';
 import { setQueueSyncAuthorization } from '@/services/syncAuthorization';
+import { markQueuedOperationsAuthorizationAttention, type QueuedOp } from '@/services/offline';
+import { runStorageMaintenance } from '@/services/storageHealth';
+import { recordAuthorizationDiagnostic } from '@/services/diagnostics';
 
 import { DashboardPage } from '@/pages/DashboardPage';
 import { DashboardLogbookPage } from '@/pages/DashboardLogbookPage';
@@ -59,7 +62,9 @@ import { ModuleSelectionReplicaPage } from '@/pages/ModuleSelectionReplicaPage';
 import { Loader2 } from 'lucide-react';
 
 import {
+  consumePendingNotificationNavigation,
   deactivateCurrentDeviceToken,
+  GRIDVISION_NOTIFICATION_OPENED_EVENT,
 } from '@/pushNotifications';
 
 const MORE_ROUTE_SHELL_TITLES: Partial<Record<MoreDestination, string>> = {
@@ -70,8 +75,9 @@ const MORE_ROUTE_SHELL_TITLES: Partial<Record<MoreDestination, string>> = {
 function Shell() {
   const { route, go } = useRouter();
   const auth = useAuth();
-  const { online, reload: reloadOperationalScope, flush: flushPendingOperations } = useApp();
+  const { online, reload: reloadOperationalScope, flush: flushPendingOperations, setActiveStationId } = useApp();
   const moreOriginRef = useRef<Route | null>(null);
+  const authorizationUserRef = useRef<string | null>(null);
 
   const [selectedModule, setSelectedModule] =
     useState<'manual' | 'scada' | 'shutdown' | null>(null);
@@ -79,7 +85,9 @@ function Shell() {
   const [roleLoading, setRoleLoading] = useState(false);
   const [authorizationState, setAuthorizationState] = useState<'LOADING' | 'AUTHORIZED' | 'OFFLINE_VERIFIED' | 'NO_ACTIVE_ROLE' | 'OFFLINE_NOT_CACHED' | 'AUTH_ERROR'>('LOADING');
   const [desktopProfile, setDesktopProfile] = useState<DesktopIdentity | null>(null);
+  const [reviewOperation, setReviewOperation] = useState<QueuedOp | null>(null);
   const [passwordSetupComplete, setPasswordSetupComplete] = useState(false);
+  const [resumeGeneration, setResumeGeneration] = useState(0);
   const isInvitationFlow = !passwordSetupComplete && (
     new URLSearchParams(window.location.search).get('invite') === '1' ||
     hasSupabaseInviteCallback
@@ -100,6 +108,19 @@ function Shell() {
         .register('/sw.js')
         .catch(() => undefined);
     }
+    void runStorageMaintenance().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    let listener: { remove: () => Promise<void> } | null = null;
+    let disposed = false;
+    void addNativeAppStateListener().then((value) => {
+      if (disposed) { void value?.remove(); return; }
+      listener = value;
+    });
+    const onResume = () => setResumeGeneration((value) => value + 1);
+    window.addEventListener(APP_RESUMED_EVENT, onResume);
+    return () => { disposed = true; window.removeEventListener(APP_RESUMED_EVENT, onResume); void listener?.remove(); };
   }, []);
 
 
@@ -109,6 +130,7 @@ function Shell() {
 
   useEffect(() => {
     if (!auth.session) {
+      authorizationUserRef.current = null;
       setSelectedModule(null);
     }
   }, [auth.session]);
@@ -118,6 +140,17 @@ function Shell() {
       moreOriginRef.current = route;
     }
   }, [route]);
+
+  useEffect(() => {
+    const openAlertsFromNotification = () => {
+      if (!auth.session || !role || !consumePendingNotificationNavigation()) return;
+      setSelectedModule('manual');
+      go({ tab: 'alerts', sub: 'all' });
+    };
+    window.addEventListener(GRIDVISION_NOTIFICATION_OPENED_EVENT, openAlertsFromNotification);
+    openAlertsFromNotification();
+    return () => window.removeEventListener(GRIDVISION_NOTIFICATION_OPENED_EVENT, openAlertsFromNotification);
+  }, [auth.session, go, role]);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,6 +166,11 @@ function Shell() {
 
     const session = auth.session;
     const userId = session.user.id;
+    if (authorizationUserRef.current !== userId) {
+      authorizationUserRef.current = userId;
+      setRole(null);
+      setDesktopProfile(null);
+    }
     const displayName = session.user.user_metadata?.full_name ?? session.user.email?.split('@')[0] ?? null;
     setRoleLoading(true);
     setAuthorizationState('LOADING');
@@ -154,13 +192,17 @@ function Shell() {
           setDesktopProfile(cached?.desktopIdentity ?? null);
           setAuthorizationState(cached ? 'OFFLINE_VERIFIED' : 'OFFLINE_NOT_CACHED');
         }
+        void recordAuthorizationDiagnostic(userId, 'REQUIRES_RECONNECTION');
         return;
       }
 
       try {
         const nextRole = await api.getMyRole();
         if (!nextRole) {
+          try { await markQueuedOperationsAuthorizationAttention(userId); }
+          catch { console.error('Pending operations could not be marked after an access change.'); }
           await deleteVerifiedApplicationIdentity(userId);
+          void recordAuthorizationDiagnostic(userId, 'REVOKED');
           if (!cancelled) {
             setRole(null);
             setDesktopProfile(null);
@@ -172,12 +214,12 @@ function Shell() {
         let profile: DesktopIdentity | null | undefined;
         if (!isNativeApp()) {
           try { profile = await api.getMyDesktopIdentity(); }
-          catch (error) { console.error('Failed to load desktop identity:', error); }
+          catch { console.error('Desktop identity could not be loaded.'); }
         }
         try {
           await writeVerifiedApplicationIdentity({ userId, role: nextRole, displayName, desktopIdentity: profile });
-        } catch (error) {
-          console.error('Failed to cache verified application identity:', error);
+        } catch {
+          console.error('Verified application identity could not be cached.');
         }
 
         const scopeVerified = await reloadOperationalScope();
@@ -185,13 +227,15 @@ function Shell() {
         setRole(nextRole);
         if (profile !== undefined) setDesktopProfile(profile);
         setAuthorizationState('AUTHORIZED');
+        void recordAuthorizationDiagnostic(userId, 'VERIFIED');
         if (scopeVerified) {
           setQueueSyncAuthorization(userId);
           void flushPendingOperations().catch(() => undefined);
         }
       } catch (error) {
-        console.error('Failed to load application role:', error);
+        console.error('Application access could not be verified.');
         if (isTransientConnectivityError(error)) {
+          void recordAuthorizationDiagnostic(userId, 'TEMPORARILY_UNAVAILABLE');
           try {
             const cached = await readVerifiedApplicationIdentity(userId);
             if (!cancelled) {
@@ -199,8 +243,8 @@ function Shell() {
               setDesktopProfile(cached?.desktopIdentity ?? null);
               setAuthorizationState(cached ? 'OFFLINE_VERIFIED' : 'OFFLINE_NOT_CACHED');
             }
-          } catch (storageError) {
-            console.error('Failed to read verified application identity:', storageError);
+          } catch {
+            console.error('Verified application identity could not be read from local storage.');
             if (!cancelled) {
               setRole(null);
               setAuthorizationState('AUTH_ERROR');
@@ -211,8 +255,8 @@ function Shell() {
           setAuthorizationState('AUTH_ERROR');
         }
       }
-    })().catch((error) => {
-      console.error('Failed to initialize application authorization:', error);
+    })().catch(() => {
+      console.error('Application authorization could not be initialized.');
       if (!cancelled) {
         setRole(null);
         setAuthorizationState('AUTH_ERROR');
@@ -224,7 +268,7 @@ function Shell() {
     return () => {
       cancelled = true;
     };
-  }, [auth.session, online, flushPendingOperations, reloadOperationalScope]);
+  }, [auth.session, online, flushPendingOperations, reloadOperationalScope, resumeGeneration]);
 
   const handleSignOut = async () => {
     setQueueSyncAuthorization(null);
@@ -319,7 +363,7 @@ function Shell() {
     return <SignInPage auth={auth} />;
   }
 
-  if (roleLoading) {
+  if (roleLoading && !role) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#142851]">
         <Loader2 className="h-8 w-8 animate-spin text-blue-300" />
@@ -469,7 +513,7 @@ function Shell() {
     route.tab === 'more' &&
     route.sub === 'operator-entry'
   ) {
-    return renderRoutedPage(<OperatorEntryPage onBack={returnToMore} />, 'more');
+    return renderRoutedPage(<OperatorEntryPage onBack={returnToMore} initialReviewOperation={reviewOperation} onReviewConsumed={() => setReviewOperation(null)} />, 'more');
   }
 
 
@@ -493,7 +537,12 @@ function Shell() {
     route.tab === 'more' &&
     route.sub === 'settings'
   ) {
-    return renderRoutedPage(<SettingsPage onBack={returnToMore} />, 'more');
+    return renderRoutedPage(<SettingsPage onBack={returnToMore} onReviewOperation={(operation) => {
+      const body = operation.body && typeof operation.body === 'object' && !Array.isArray(operation.body) ? operation.body as Record<string, unknown> : {};
+      if (typeof body.station_id === 'string') setActiveStationId(body.station_id);
+      setReviewOperation(operation);
+      go({ tab: 'more', sub: operation.table === 'interruptions' ? 'interruption-entry' : 'operator-entry' });
+    }} />, 'more');
   }
 
   const moreRouteShellTitle = route.tab === 'more' && route.sub

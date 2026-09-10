@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowLeft, Bell, CheckCircle2, ChevronRight, ClipboardList, Loader2, RefreshCw, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Bell, CheckCircle2, ChevronRight, ClipboardList, Loader2, RefreshCw, X, Zap } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, type DashboardAttentionItem, type DashboardOperationalSummary, type DashboardTodayLoadTrendRow } from '@/services/api';
 import ScreenExportMenu from '@/components/ScreenExportMenu';
@@ -7,6 +7,9 @@ import { DesktopPageContainer } from '@/components/layout/DesktopPageContainer';
 import { DesktopSection } from '@/components/layout/DesktopSection';
 import { ResponsiveCardGrid } from '@/components/layout/ResponsiveCardGrid';
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh';
+import { useApp } from '@/context/AppContext';
+import { supabase } from '@/services/supabase';
+import { cachedFreshness, formatCacheAge, readOperationalSnapshot, writeOperationalSnapshot } from '@/services/operationalReadCache';
 
 const IST_TIME_ZONE = 'Asia/Kolkata';
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -96,6 +99,8 @@ function LoadingBlock({ label }: { label: string }) { return <div className="fle
 function attentionCopy(item: DashboardAttentionItem): string { if (item.issue_type === 'INTERRUPTION') return `${item.issue_count} open interruption${item.issue_count === 1 ? '' : 's'}`; if (item.issue_type === 'PARAMETER_ALERT') return `${item.issue_count} active parameter alert${item.issue_count === 1 ? '' : 's'}`; return `Logbook completeness ${item.completeness_percent?.toFixed(1) ?? '0'}%`; }
 
 export function DashboardLogbookPage({ onBack, onNavigate }: { onBack: () => void; onNavigate: (target: DashboardTarget) => void }) {
+  const { online, pending } = useApp();
+  const [cacheUserId, setCacheUserId] = useState<string | null>(null);
   const exportContentRef = useRef<HTMLDivElement>(null);
   const summaryCache = useRef(new Map<string, CacheEntry<DashboardOperationalSummary>>());
   const trendCache = useRef(new Map<string, CacheEntry<DashboardTodayLoadTrendRow[]>>());
@@ -104,28 +109,33 @@ export function DashboardLogbookPage({ onBack, onNavigate }: { onBack: () => voi
   const [summary, setSummary] = useState<ResourceState<DashboardOperationalSummary>>(emptyResource());
   const [trend, setTrend] = useState<ResourceState<DashboardTodayLoadTrendRow[]>>(emptyResource());
   const [attention, setAttention] = useState<ResourceState<DashboardAttentionItem[]>>(emptyResource());
+  const [usingDashboardCache, setUsingDashboardCache] = useState(false);
+  useEffect(() => { let active = true; void supabase.auth.getSession().then(({ data }) => { if (active) setCacheUserId(data.session?.user.id ?? null); }); return () => { active = false; }; }, []);
 
   const refreshSummary = useCallback(async (force = false) => {
-    const { startIso, endIso, date } = getTodayBoundsIST(); const key = `dashboardSummary|ALL|${date}`; const cached = cacheRead(summaryCache.current, key); const fresh = Boolean(cached && Date.now() - cached.updatedAt < CACHE_TTL_MS); const generation = ++summaryGeneration.current;
+    if (!cacheUserId) return; const { startIso, endIso, date } = getTodayBoundsIST(); const key = `dashboardSummary|ALL|${date}`; const persisted = readOperationalSnapshot<DashboardOperationalSummary>(cacheUserId, key); const memoryCached = cacheRead(summaryCache.current, key); const cached = memoryCached ?? (persisted ? { data: persisted.value, updatedAt: Date.parse(persisted.cachedAt) } : null); if (!memoryCached && persisted) setUsingDashboardCache(true); const fresh = Boolean(online && cached && Date.now() - cached.updatedAt < CACHE_TTL_MS); const generation = ++summaryGeneration.current;
     if (cached) setSummary({ data: cached.data, loading: !fresh || force, error: null, key, updatedAt: cached.updatedAt }); else setSummary((previous) => ({ ...previous, loading: true, error: null, key }));
-    if (fresh && !force) return;
-    try { const data = await api.getDashboardOperationalSummary(startIso, endIso); if (generation !== summaryGeneration.current) return; cacheWrite(summaryCache.current, key, data); setSummary({ data, loading: false, error: null, key, updatedAt: Date.now() }); }
+    if (!online) { setUsingDashboardCache(Boolean(cached)); setSummary((previous) => ({ ...previous, loading: false, error: cached ? null : 'No cached dashboard data is available on this device. Connect once to load the dashboard.', key })); return; }
+    if (fresh && !force && !usingDashboardCache) return;
+    try { const data = await api.getDashboardOperationalSummary(startIso, endIso); if (generation !== summaryGeneration.current) return; const snapshot = writeOperationalSnapshot(cacheUserId, key, data); cacheWrite(summaryCache.current, key, data); setUsingDashboardCache(false); setSummary({ data, loading: false, error: null, key, updatedAt: Date.parse(snapshot.cachedAt) }); }
     catch (error) { if (generation !== summaryGeneration.current) return; setSummary((previous) => ({ ...previous, loading: false, error: error instanceof Error ? error.message : 'Could not load summary.', key })); }
-  }, []);
+  }, [cacheUserId, online, usingDashboardCache]);
   const refreshTrend = useCallback(async (force = false) => {
-    const { startIso, endIso, date } = getTodayBoundsIST(); const key = `dashboardTrend|ALL|${date}`; const cached = cacheRead(trendCache.current, key); const fresh = Boolean(cached && Date.now() - cached.updatedAt < CACHE_TTL_MS); const generation = ++trendGeneration.current;
+    if (!cacheUserId) return; const { startIso, endIso, date } = getTodayBoundsIST(); const key = `dashboardTrend|ALL|${date}`; const persisted = readOperationalSnapshot<DashboardTodayLoadTrendRow[]>(cacheUserId, key); const cached = cacheRead(trendCache.current, key) ?? (persisted ? { data: persisted.value, updatedAt: Date.parse(persisted.cachedAt) } : null); const fresh = Boolean(online && cached && Date.now() - cached.updatedAt < CACHE_TTL_MS); const generation = ++trendGeneration.current;
     if (cached) setTrend({ data: cached.data, loading: !fresh || force, error: null, key, updatedAt: cached.updatedAt }); else setTrend((previous) => ({ ...previous, loading: true, error: null, key }));
+    if (!online) { setTrend((previous) => ({ ...previous, loading: false, error: cached ? null : 'No cached load timeline is available.', key })); return; }
     if (fresh && !force) return;
-    try { const data = await api.getDashboardTodayLoadTrend(startIso, endIso); if (generation !== trendGeneration.current) return; cacheWrite(trendCache.current, key, data); setTrend({ data, loading: false, error: null, key, updatedAt: Date.now() }); }
+    try { const data = await api.getDashboardTodayLoadTrend(startIso, endIso); if (generation !== trendGeneration.current) return; const snapshot = writeOperationalSnapshot(cacheUserId, key, data); cacheWrite(trendCache.current, key, data); setTrend({ data, loading: false, error: null, key, updatedAt: Date.parse(snapshot.cachedAt) }); }
     catch (error) { if (generation !== trendGeneration.current) return; setTrend((previous) => ({ ...previous, loading: false, error: error instanceof Error ? error.message : 'Could not load today’s trend.', key })); }
-  }, []);
+  }, [cacheUserId, online]);
   const refreshAttention = useCallback(async (force = false) => {
-    const { startIso, endIso, date } = getTodayBoundsIST(); const key = `dashboardAttention|ALL|${date}`; const cached = cacheRead(attentionCache.current, key); const fresh = Boolean(cached && Date.now() - cached.updatedAt < CACHE_TTL_MS); const generation = ++attentionGeneration.current;
+    if (!cacheUserId) return; const { startIso, endIso, date } = getTodayBoundsIST(); const key = `dashboardAttention|ALL|${date}`; const persisted = readOperationalSnapshot<DashboardAttentionItem[]>(cacheUserId, key); const cached = cacheRead(attentionCache.current, key) ?? (persisted ? { data: persisted.value, updatedAt: Date.parse(persisted.cachedAt) } : null); const fresh = Boolean(online && cached && Date.now() - cached.updatedAt < CACHE_TTL_MS); const generation = ++attentionGeneration.current;
     if (cached) setAttention({ data: cached.data, loading: !fresh || force, error: null, key, updatedAt: cached.updatedAt }); else setAttention((previous) => ({ ...previous, loading: true, error: null, key }));
+    if (!online) { setAttention((previous) => ({ ...previous, loading: false, error: cached ? null : 'No cached attention items are available.', key })); return; }
     if (fresh && !force) return;
-    try { const data = await api.getDashboardAttentionItems(startIso, endIso, 5); if (generation !== attentionGeneration.current) return; cacheWrite(attentionCache.current, key, data); setAttention({ data, loading: false, error: null, key, updatedAt: Date.now() }); }
+    try { const data = await api.getDashboardAttentionItems(startIso, endIso, 5); if (generation !== attentionGeneration.current) return; const snapshot = writeOperationalSnapshot(cacheUserId, key, data.slice(0, 5)); cacheWrite(attentionCache.current, key, data); setAttention({ data, loading: false, error: null, key, updatedAt: Date.parse(snapshot.cachedAt) }); }
     catch (error) { if (generation !== attentionGeneration.current) return; setAttention((previous) => ({ ...previous, loading: false, error: error instanceof Error ? error.message : 'Could not load attention items.', key })); }
-  }, []);
+  }, [cacheUserId, online]);
   const refreshAll = useCallback(() => { void refreshSummary(true); void refreshTrend(true); void refreshAttention(true); }, [refreshAttention, refreshSummary, refreshTrend]);
   useEffect(() => { void refreshSummary(); void refreshTrend(); void refreshAttention(); }, [refreshAttention, refreshSummary, refreshTrend]);
   const refreshFromRealtime = useCallback((changedTables: ReadonlySet<(typeof DASHBOARD_REALTIME_TABLES)[number]>) => {
@@ -150,12 +160,14 @@ export function DashboardLogbookPage({ onBack, onNavigate }: { onBack: () => voi
     return { label: 'Normal', detail: 'No open interruptions or active parameter alerts.', tone: 'green' };
   }, [summary.data]);
   const isRefreshing = summary.loading || trend.loading || attention.loading; const hasSummary = Boolean(summary.data);
+  const freshness = online && !usingDashboardCache ? 'LIVE' : cachedFreshness(summary.updatedAt ? new Date(summary.updatedAt).toISOString() : null);
+  const freshnessLabel = online && !usingDashboardCache ? `Live · Updated ${formatLastUpdated(summary.updatedAt)}` : summary.updatedAt ? `${online ? '' : 'Offline · '}Cached · Updated ${formatCacheAge(new Date(summary.updatedAt).toISOString())}` : 'Offline · No cached dashboard data';
 
   return <>
     <div className="lg:invisible lg:pointer-events-none lg:fixed lg:-left-[10000px] lg:top-0 lg:h-screen lg:w-[390px] lg:overflow-hidden lg:[contain:strict]">
     <div className="flex min-h-screen flex-col bg-[#EEF3F8]">
     <header className="rounded-b-[22px] bg-gradient-to-br from-[#0D47A1] to-[#1565C0] px-4 pb-4 pt-[22px] text-white shadow-md"><div className="flex items-center justify-between gap-3"><button type="button" onClick={onBack} className="rounded-full p-1 transition hover:bg-white/10 active:scale-95" aria-label="Back to Module Selection"><ArrowLeft size={24} /></button><div className="min-w-0 flex-1 text-center"><h1 className="truncate text-xl font-bold">Dashboard</h1><p className="mt-0.5 truncate text-[11px] font-medium text-blue-100">Real-time overview of grid operations</p></div><div className="flex items-center gap-2"><button type="button" onClick={() => onNavigate('alerts')} className="relative rounded-full p-1 transition hover:bg-white/10 active:scale-95" aria-label="Open alerts"><Bell size={22} />{(summary.data?.active_parameter_alerts ?? 0) > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[9px] font-bold">{summary.data?.active_parameter_alerts}</span>}</button><ScreenExportMenu contentRef={exportContentRef} title="GridVision Operational Dashboard" /></div></div></header>
-    <main ref={exportContentRef} className="flex-1 overflow-y-auto px-4 pb-28 pt-4"><div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-base font-bold text-slate-800">Operational Overview</h2><p className="mt-1 text-[11px] font-medium text-slate-500">All accessible stations · Today (IST)</p></div><button type="button" onClick={refreshAll} disabled={isRefreshing} className="flex shrink-0 items-center gap-1 rounded-xl bg-white px-2.5 py-2 text-xs font-bold text-blue-700 shadow-sm disabled:opacity-70" aria-label="Refresh dashboard"><RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />{isRefreshing ? 'Updating…' : 'Refresh'}</button></div><p className="mb-3 flex items-center gap-1.5 text-[11px] text-slate-500"><span className="h-2 w-2 rounded-full bg-emerald-500" />Last updated: {formatLastUpdated(summary.updatedAt)}</p>
+    <main ref={exportContentRef} className="flex-1 overflow-y-auto px-4 pb-28 pt-4"><div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-base font-bold text-slate-800">Operational Overview</h2><p className="mt-1 text-[11px] font-medium text-slate-500">All accessible stations · Today (IST)</p></div><button type="button" onClick={refreshAll} disabled={isRefreshing || !online} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-blue-700 shadow-sm disabled:opacity-70" aria-label={isRefreshing ? 'Refreshing dashboard' : 'Refresh dashboard'} title={isRefreshing ? 'Refreshing' : 'Refresh'} aria-busy={isRefreshing}><RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} /></button></div><p className="mb-3 flex items-center gap-1.5 text-[11px] text-slate-500"><span className={`h-2 w-2 rounded-full ${freshness === 'LIVE' ? 'bg-emerald-500' : freshness === 'RECENT_CACHE' ? 'bg-amber-500' : 'bg-red-500'}`} />{freshnessLabel}</p>{!online && pending > 0 ? <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800">{pending} local change{pending === 1 ? ' is' : 's are'} pending sync and not yet reflected in server dashboard totals.</p> : null}
       <section className={`grid grid-cols-2 gap-3 transition-opacity ${summary.loading && hasSummary ? 'opacity-80' : ''}`} aria-busy={summary.loading}>{summary.loading && !hasSummary ? <div className="col-span-2 rounded-2xl bg-white"><LoadingBlock label="Loading operational summary…" /></div> : <><MetricCard icon={<Zap className="h-5 w-5" />} label="Peak Load Today" value={summary.data?.peak_mw === null || summary.data?.peak_mw === undefined ? '—' : `${summary.data.peak_mw.toFixed(2)} MW`} detail={summary.data?.peak_time ? `at ${formatIstTime(summary.data.peak_time)} hrs` : 'No MW reading yet'} tone="blue" /><MetricCard icon={<TriangleAlert className="h-5 w-5" />} label="Open Interruptions" value={String(summary.data?.open_interruptions ?? '—')} detail={`${summary.data?.interruption_stations ?? 0} station${(summary.data?.interruption_stations ?? 0) === 1 ? '' : 's'} affected`} tone="red" /><MetricCard icon={<AlertTriangle className="h-5 w-5" />} label="Active Alerts" value={String(summary.data?.active_parameter_alerts ?? '—')} detail={`${summary.data?.alert_feeders ?? 0} feeder${(summary.data?.alert_feeders ?? 0) === 1 ? '' : 's'} affected`} tone="orange" /><MetricCard icon={<CheckCircle2 className="h-5 w-5" />} label="Data Completeness" value={summary.data ? `${summary.data.completeness_percent.toFixed(1)}%` : '—'} detail={summary.data ? `${summary.data.entered_feeder_hours}/${summary.data.expected_feeder_hours} feeder-hours` : 'Loading status'} tone="green" /></>}</section>{summary.error && !hasSummary && <RetryMessage message="Could not load the operational summary." onRetry={() => void refreshSummary(true)} />}
       <DashboardCard title="Attention Required" subtitle="Current issues needing review" loading={attention.loading} hasData={Boolean(attention.data)} error={attention.error} onRetry={() => void refreshAttention(true)}>{attention.loading && !attention.data ? <LoadingBlock label="Loading current issues…" /> : attention.data?.length ? <div className="divide-y divide-slate-100">{attention.data.map((item) => { const target: DashboardTarget = item.issue_type === 'COMPLETENESS' ? 'analytics' : 'alerts'; const tone = item.severity === 'HIGH' ? 'bg-red-50 text-red-600' : item.severity === 'MEDIUM' ? 'bg-orange-50 text-orange-600' : 'bg-blue-50 text-blue-700'; const icon = item.issue_type === 'INTERRUPTION' ? <TriangleAlert className="h-4 w-4" /> : item.issue_type === 'PARAMETER_ALERT' ? <AlertTriangle className="h-4 w-4" /> : <ClipboardList className="h-4 w-4" />; return <button key={`${item.issue_type}-${item.station_id}`} type="button" onClick={() => onNavigate(target)} className="flex w-full items-center gap-3 py-3 text-left transition active:bg-slate-50"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${tone}`}>{icon}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-800">{item.station_name}</span><span className="mt-0.5 block truncate text-[11px] font-medium text-slate-500">{attentionCopy(item)}</span></span><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${tone}`}>{item.severity}</span><ChevronRight className="h-4 w-4 shrink-0 text-slate-400" /></button>; })}</div> : <p className="py-3 text-center text-xs font-medium text-emerald-600">No current issues require attention.</p>}{attention.error && !attention.data && <RetryMessage message="Could not load attention items." onRetry={() => void refreshAttention(true)} />}</DashboardCard>
       <DashboardCard title="Today’s Load (MW)" subtitle={`Complete: ${completeHours} / ${expectedHours} expected hours`} loading={trend.loading} hasData={Boolean(trend.data)} error={trend.error} onRetry={() => void refreshTrend(true)}>{trend.loading && !trend.data ? <LoadingBlock label="Loading today’s load trend…" /> : <><div className="mb-3 flex flex-wrap gap-3 text-[10px] font-semibold text-slate-500"><span className="flex items-center gap-1.5"><StatusDot status="FULL" />Complete</span><span className="flex items-center gap-1.5"><StatusDot status="PARTIAL" />Partial</span><span className="flex items-center gap-1.5"><StatusDot status="EMPTY" />Missing</span></div><div className={`h-56 rounded-2xl bg-slate-50 px-1 py-3 transition-opacity ${trend.loading ? 'opacity-80' : ''}`}><ResponsiveContainer width="100%" height="100%"><AreaChart data={trendPoints} margin={{ top: 8, right: 6, left: -14, bottom: 0 }}><defs><linearGradient id="dashboardLoadGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#2563EB" stopOpacity={0.25} /><stop offset="95%" stopColor="#2563EB" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} /><XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={9} interval={2} /><YAxis tickLine={false} axisLine={false} fontSize={9} width={45} /><Tooltip content={<TrendTooltip />} /><Area type="linear" dataKey="total_mw" stroke="#2563EB" strokeWidth={3} fill="url(#dashboardLoadGradient)" connectNulls={false} dot={{ r: 3, fill: '#2563EB', stroke: '#fff', strokeWidth: 1.5 }} activeDot={{ r: 5 }} isAnimationActive={false} /></AreaChart></ResponsiveContainer></div><div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 rounded-xl border border-slate-100 bg-slate-50 py-2"><TrendStat label="Peak Load" value={peakPoint?.total_mw === null || !peakPoint ? '—' : `${peakPoint.total_mw.toFixed(2)} MW`} /><TrendStat label="Peak Hour" value={peakPoint?.label ?? '—'} /><TrendStat label="Complete Hours" value={`${completeHours}/${expectedHours}`} /></div></>}{trend.error && !trend.data && <RetryMessage message="Could not load today’s trend." onRetry={() => void refreshTrend(true)} />}</DashboardCard>
@@ -178,6 +190,10 @@ export function DashboardLogbookPage({ onBack, onNavigate }: { onBack: () => voi
       onRetryAttention={() => void refreshAttention(true)}
       onBack={onBack}
       onNavigate={onNavigate}
+      online={online}
+      pending={pending}
+      freshnessLabel={freshnessLabel}
+      freshness={freshness}
     />
   </>;
 }
@@ -198,9 +214,13 @@ type DesktopDashboardProps = {
   onRetryAttention: () => void;
   onBack: () => void;
   onNavigate: (target: DashboardTarget) => void;
+  online: boolean;
+  pending: number;
+  freshnessLabel: string;
+  freshness: ReturnType<typeof cachedFreshness> | 'LIVE';
 };
 
-function DesktopDashboard({ summary, trend, attention, trendPoints, completeHours, expectedHours, peakPoint, operationalStatus, isRefreshing, onRefresh, onRetrySummary, onRetryTrend, onRetryAttention, onBack, onNavigate }: DesktopDashboardProps) {
+function DesktopDashboard({ summary, trend, attention, trendPoints, completeHours, expectedHours, peakPoint, operationalStatus, isRefreshing, onRefresh, onRetrySummary, onRetryTrend, onRetryAttention, onBack, onNavigate, online, pending, freshnessLabel, freshness }: DesktopDashboardProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const hasSummary = Boolean(summary.data);
 
@@ -213,13 +233,13 @@ function DesktopDashboard({ summary, trend, attention, trendPoints, completeHour
           <div className="flex items-center gap-3" data-report-exclude>
             <button type="button" onClick={() => onNavigate('alerts')} className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700" aria-label="Open alerts"><Bell className="h-5 w-5" />{(summary.data?.active_parameter_alerts ?? 0) > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">{summary.data?.active_parameter_alerts}</span>}</button>
             <ScreenExportMenu contentRef={contentRef} title="GridVision Operational Dashboard" />
-            <button type="button" onClick={onRefresh} disabled={isRefreshing} className="flex h-10 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-800 disabled:opacity-70"><RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />{isRefreshing ? 'Updating…' : 'Refresh'}</button>
+            <button type="button" onClick={onRefresh} disabled={isRefreshing || !online} className="grid h-10 w-10 place-items-center rounded-xl bg-blue-700 text-white shadow-sm transition hover:bg-blue-800 disabled:opacity-70" aria-label={isRefreshing ? 'Refreshing dashboard' : 'Refresh dashboard'} title={isRefreshing ? 'Refreshing' : 'Refresh'} aria-busy={isRefreshing}><RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} /></button>
           </div>
         </header>
 
         <div className="py-6">
           <OperationalStatusBanner status={operationalStatus} loading={summary.loading && !hasSummary} />
-          <div className="mb-4 flex items-end justify-between"><div><h2 className="text-lg font-bold text-slate-900">Operational overview</h2><p className="mt-1 text-xs font-medium text-slate-500">All accessible stations · Today (IST)</p></div><p className="flex items-center gap-1.5 text-xs text-slate-500"><span className="h-2 w-2 rounded-full bg-emerald-500" />Last updated: {formatLastUpdated(summary.updatedAt)}</p></div>
+          <div className="mb-4 flex items-end justify-between"><div><h2 className="text-lg font-bold text-slate-900">Operational overview</h2><p className="mt-1 text-xs font-medium text-slate-500">All accessible stations · Today (IST)</p></div><p className="flex items-center gap-1.5 text-xs text-slate-500"><span className={`h-2 w-2 rounded-full ${freshness === 'LIVE' ? 'bg-emerald-500' : freshness === 'RECENT_CACHE' ? 'bg-amber-500' : 'bg-red-500'}`} />{freshnessLabel}</p></div>{!online && pending > 0 ? <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">{pending} local change{pending === 1 ? ' is' : 's are'} pending sync and not yet reflected in server dashboard totals.</p> : null}
 
           {summary.loading && !hasSummary ? <div className="rounded-2xl bg-white"><LoadingBlock label="Loading operational summary…" /></div> : <ResponsiveCardGrid columns="2" className="xl:grid-cols-4">
             <MetricCard icon={<Zap className="h-5 w-5" />} label="Total Stations" value={String(summary.data?.total_stations ?? '—')} detail={`${summary.data?.stations_reporting ?? 0} reporting today`} tone="blue" />

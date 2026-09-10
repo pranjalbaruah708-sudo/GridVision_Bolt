@@ -9,6 +9,7 @@ export const OPERATIONS_STORE = 'operations';
 export const METADATA_STORE = 'metadata';
 export const LEGACY_QUEUE_KEY = 'gv_pending_queue';
 export const LEGACY_MIGRATION_KEY = 'legacy-queue-migrated-v1';
+export const LAST_DURABLE_WRITE_KEY = 'storage:last-successful-durable-write-at';
 
 export type StoredOperation = Record<string, unknown> & { id: string };
 
@@ -21,10 +22,12 @@ export interface OfflineStorage {
   deleteOperation(id: string): Promise<void>;
   clearOperations(): Promise<void>;
   countOperations(): Promise<number>;
+  countOperationsByOwner(ownerUserId: string): Promise<number>;
   mutateOperations(mutator: (operations: StoredOperation[]) => StoredOperation[]): Promise<StoredOperation[]>;
   getMetadata<T>(key: string): Promise<T | null>;
   setMetadata<T>(key: string, value: T): Promise<void>;
   deleteMetadata(key: string): Promise<void>;
+  listMetadata(prefix?: string): Promise<Array<{ key: string; value: unknown }>>;
 }
 
 export class OfflineStorageError extends Error {
@@ -67,7 +70,14 @@ class IndexedDbOfflineStorage implements OfflineStorage {
         }
         if (!database.objectStoreNames.contains(METADATA_STORE)) database.createObjectStore(METADATA_STORE);
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const database = request.result;
+        database.onversionchange = () => {
+          database.close();
+          this.databasePromise = null;
+        };
+        resolve(database);
+      };
       request.onerror = () => {
         this.databasePromise = null;
         reject(new OfflineStorageError('Could not open offline operational storage.', request.error));
@@ -98,9 +108,10 @@ class IndexedDbOfflineStorage implements OfflineStorage {
 
   async putOperations(operations: StoredOperation[]): Promise<void> {
     const database = await this.open();
-    const transaction = database.transaction(OPERATIONS_STORE, 'readwrite');
+    const transaction = database.transaction([OPERATIONS_STORE, METADATA_STORE], 'readwrite');
     const store = transaction.objectStore(OPERATIONS_STORE);
     operations.forEach((operation) => store.put(operation));
+    transaction.objectStore(METADATA_STORE).put(Date.now(), LAST_DURABLE_WRITE_KEY);
     await transactionDone(transaction);
   }
 
@@ -124,14 +135,21 @@ class IndexedDbOfflineStorage implements OfflineStorage {
     return requestResult(transaction.objectStore(OPERATIONS_STORE).count());
   }
 
+  async countOperationsByOwner(ownerUserId: string): Promise<number> {
+    const database = await this.open();
+    const transaction = database.transaction(OPERATIONS_STORE, 'readonly');
+    return requestResult(transaction.objectStore(OPERATIONS_STORE).index('ownerUserId').count(IDBKeyRange.only(ownerUserId)));
+  }
+
   async mutateOperations(mutator: (operations: StoredOperation[]) => StoredOperation[]): Promise<StoredOperation[]> {
     const database = await this.open();
-    const transaction = database.transaction(OPERATIONS_STORE, 'readwrite');
+    const transaction = database.transaction([OPERATIONS_STORE, METADATA_STORE], 'readwrite');
     const store = transaction.objectStore(OPERATIONS_STORE);
     const current = await requestResult(store.getAll()) as StoredOperation[];
     const next = mutator(current);
     store.clear();
     next.forEach((operation) => store.put(operation));
+    transaction.objectStore(METADATA_STORE).put(Date.now(), LAST_DURABLE_WRITE_KEY);
     await transactionDone(transaction);
     return next;
   }
@@ -145,7 +163,9 @@ class IndexedDbOfflineStorage implements OfflineStorage {
   async setMetadata<T>(key: string, value: T): Promise<void> {
     const database = await this.open();
     const transaction = database.transaction(METADATA_STORE, 'readwrite');
-    transaction.objectStore(METADATA_STORE).put(value, key);
+    const store = transaction.objectStore(METADATA_STORE);
+    store.put(value, key);
+    if (key !== LAST_DURABLE_WRITE_KEY) store.put(Date.now(), LAST_DURABLE_WRITE_KEY);
     await transactionDone(transaction);
   }
 
@@ -154,6 +174,14 @@ class IndexedDbOfflineStorage implements OfflineStorage {
     const transaction = database.transaction(METADATA_STORE, 'readwrite');
     transaction.objectStore(METADATA_STORE).delete(key);
     await transactionDone(transaction);
+  }
+
+  async listMetadata(prefix = ''): Promise<Array<{ key: string; value: unknown }>> {
+    const database = await this.open();
+    const transaction = database.transaction(METADATA_STORE, 'readonly');
+    const store = transaction.objectStore(METADATA_STORE);
+    const [keys, values] = await Promise.all([requestResult(store.getAllKeys()), requestResult(store.getAll())]);
+    return keys.flatMap((key, index) => typeof key === 'string' && key.startsWith(prefix) ? [{ key, value: values[index] }] : []);
   }
 }
 
@@ -171,6 +199,7 @@ class LocalStorageFallback implements OfflineStorage {
   private write(operations: StoredOperation[]): void {
     try { localStorage.setItem(LEGACY_QUEUE_KEY, JSON.stringify(operations)); }
     catch (cause) { throw new OfflineStorageError('Could not save the offline operational queue.', cause); }
+    try { localStorage.setItem(`gv_offline_meta:${LAST_DURABLE_WRITE_KEY}`, JSON.stringify(Date.now())); } catch { /* diagnostic failure cannot invalidate a durable write */ }
   }
   async getAllOperations() { return this.read(); }
   async getOperation(id: string) { return this.read().find((op) => op.id === id) ?? null; }
@@ -179,10 +208,12 @@ class LocalStorageFallback implements OfflineStorage {
   async deleteOperation(id: string) { await this.mutateOperations((ops) => ops.filter((op) => op.id !== id)); }
   async clearOperations() { this.write([]); }
   async countOperations() { return this.read().length; }
+  async countOperationsByOwner(ownerUserId: string) { return this.read().filter((op) => op.ownerUserId === ownerUserId).length; }
   async mutateOperations(mutator: (operations: StoredOperation[]) => StoredOperation[]) { const next = mutator(this.read()); this.write(next); return next; }
   async getMetadata<T>(key: string) { try { const value = localStorage.getItem(`gv_offline_meta:${key}`); return value ? JSON.parse(value) as T : null; } catch (cause) { throw new OfflineStorageError(undefined, cause); } }
-  async setMetadata<T>(key: string, value: T) { try { localStorage.setItem(`gv_offline_meta:${key}`, JSON.stringify(value)); } catch (cause) { throw new OfflineStorageError(undefined, cause); } }
+  async setMetadata<T>(key: string, value: T) { try { localStorage.setItem(`gv_offline_meta:${key}`, JSON.stringify(value)); if (key !== LAST_DURABLE_WRITE_KEY) { try { localStorage.setItem(`gv_offline_meta:${LAST_DURABLE_WRITE_KEY}`, JSON.stringify(Date.now())); } catch { /* best effort diagnostic */ } } } catch (cause) { throw new OfflineStorageError(undefined, cause); } }
   async deleteMetadata(key: string) { try { localStorage.removeItem(`gv_offline_meta:${key}`); } catch (cause) { throw new OfflineStorageError(undefined, cause); } }
+  async listMetadata(prefix = '') { try { return Object.keys(localStorage).filter((key) => key.startsWith('gv_offline_meta:')).flatMap((key) => { const metadataKey = key.slice('gv_offline_meta:'.length); if (!metadataKey.startsWith(prefix)) return []; const raw = localStorage.getItem(key); return raw === null ? [] : [{ key: metadataKey, value: JSON.parse(raw) as unknown }]; }); } catch (cause) { throw new OfflineStorageError(undefined, cause); } }
 }
 
 let storage: OfflineStorage | null = null;

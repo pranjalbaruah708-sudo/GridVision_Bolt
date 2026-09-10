@@ -11,6 +11,7 @@ import {
   getReportPeriodDates,
   getReportPeriodLabel,
   getReportRangeIso,
+  loadAllReportRows,
   ReportActions,
   ReportFilters,
   ReportPageShell,
@@ -110,6 +111,14 @@ export function ParameterExceptionReportPage({ onBack }: { onBack: () => void })
   ] : [], [summary]);
 
   const activeFilters = loadedReport?.filters ?? filters;
+  const loadAllRows = useCallback(async () => {
+    if (!loadedReport) return [];
+    const active = loadedReport.filters;
+    const { startIso, endIso } = getReportRangeIso(active);
+    return loadAllReportRows(loadedReport.total, (page, pageSize) => api.getParameterExceptionDetailPage(
+      startIso, endIso, page, pageSize, active.stationId || null, active.feederId || null, active.parameter || null,
+    ));
+  }, [loadedReport]);
   const stationScope = activeFilters.stationId ? stations.find((station) => station.id === activeFilters.stationId)?.name ?? 'Selected station' : 'All accessible stations';
   const feederScope = activeFilters.feederId ? feeders.find((feeder) => feeder.id === activeFilters.feederId)?.name ?? 'Selected feeder' : undefined;
 
@@ -119,7 +128,7 @@ export function ParameterExceptionReportPage({ onBack }: { onBack: () => void })
     onBack={onBack}
     contentRef={contentRef}
     desktopWide
-    actions={<ReportActions title="Parameter Exception Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+    actions={<ReportActions title="Parameter Exception Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf totalRows={loadedReport?.total ?? resource.rows.length} loadAllRows={loadAllRows} />}
     filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: Boolean(filters.stationId), parameterOptions: parameters.map((parameter) => ({ value: parameter, label: parameterLabel(parameter) })) }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
   >
     {loadedReport ? <ReportPreview

@@ -1,8 +1,86 @@
 import { PushNotifications } from '@capacitor/push-notifications';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { supabase } from '@/services/supabase';
+import { isAndroidApp } from '@/services/platform/runtime';
 
 let pendingFcmToken: string | null = null;
 let authListenerStarted = false;
+let pushInitialization: Promise<void> | null = null;
+export const GRIDVISION_NOTIFICATION_OPENED_EVENT = 'gv-notification-opened';
+let pendingNotificationNavigation = false;
+const FOREGROUND_CHANNEL_ID = 'gridvision_urgent';
+const displayedForegroundNotifications = new Set<string>();
+const FOREGROUND_DATA_KEYS = [
+  'notification_event_id', 'station_id', 'feeder_id', 'max_unit_type',
+  'event_time', 'message', 'notification_class', 'source_recorded_at', 'source_synced_at',
+] as const;
+
+function requestNotificationNavigation(): void {
+  pendingNotificationNavigation = true;
+  window.dispatchEvent(new Event(GRIDVISION_NOTIFICATION_OPENED_EVENT));
+}
+
+export function consumePendingNotificationNavigation(): boolean {
+  if (!pendingNotificationNavigation) return false;
+  pendingNotificationNavigation = false;
+  return true;
+}
+
+function foregroundNotificationKey(notification: { id: string; title?: string; body?: string; data?: unknown }): string {
+  const data = notification.data && typeof notification.data === 'object'
+    ? notification.data as Record<string, unknown>
+    : {};
+  const eventId = typeof data.notification_event_id === 'string' ? data.notification_event_id : '';
+  return notification.id || eventId || `${notification.title ?? ''}|${notification.body ?? ''}`;
+}
+
+function foregroundNotificationId(key: string): number {
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) hash = ((hash * 31) + key.charCodeAt(index)) | 0;
+  return hash === -2147483648 ? 2147483647 : Math.abs(hash) || 1;
+}
+
+function safeForegroundExtra(data: unknown): Record<string, string> {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  const source = data as Record<string, unknown>;
+  return Object.fromEntries(FOREGROUND_DATA_KEYS.flatMap((key) => {
+    const value = source[key];
+    return typeof value === 'string' && value.length <= 500 ? [[key, value]] : [];
+  }));
+}
+
+async function displayForegroundNotification(notification: { id: string; title?: string; body?: string; data?: unknown }): Promise<void> {
+  if (!isAndroidApp()) return;
+  const key = foregroundNotificationKey(notification);
+  if (displayedForegroundNotifications.has(key)) return;
+  displayedForegroundNotifications.add(key);
+  if (displayedForegroundNotifications.size > 100) {
+    const oldest = displayedForegroundNotifications.values().next().value;
+    if (oldest) displayedForegroundNotifications.delete(oldest);
+  }
+
+  try {
+    const permission = await LocalNotifications.checkPermissions();
+    if (permission.display !== 'granted') {
+      displayedForegroundNotifications.delete(key);
+      return;
+    }
+    const incomingTitle = notification.title?.trim() ?? '';
+    const incomingBody = notification.body?.trim() ?? '';
+    const hasGenericTitle = !incomingTitle || incomingTitle.toLocaleLowerCase() === 'gridvision notification';
+    await LocalNotifications.schedule({ notifications: [{
+      id: foregroundNotificationId(key),
+      title: hasGenericTitle ? incomingBody || 'GridVision' : incomingTitle,
+      body: hasGenericTitle ? '' : incomingBody,
+      largeBody: hasGenericTitle ? undefined : incomingBody || undefined,
+      channelId: FOREGROUND_CHANNEL_ID,
+      extra: safeForegroundExtra(notification.data),
+    }] });
+  } catch {
+    displayedForegroundNotifications.delete(key);
+    console.error('A foreground notification could not be displayed.');
+  }
+}
 
 // --------------------------------------------------
 // Save / claim FCM token to Supabase
@@ -20,10 +98,7 @@ async function saveFcmTokenToSupabase(token: string) {
     } = await supabase.auth.getUser();
 
     if (userError) {
-      console.error(
-        '❌ Error getting authenticated user:',
-        userError
-      );
+      console.error('Push notification registration could not verify the signed-in user.');
 
       // Keep token so it can be saved after login
       pendingFcmToken = token;
@@ -48,10 +123,7 @@ async function saveFcmTokenToSupabase(token: string) {
     );
 
     if (error) {
-      console.error(
-        '❌ Error claiming FCM token:',
-        error
-      );
+      console.error('Push notification device registration could not be completed.');
 
       // Keep it pending so it can be retried
       pendingFcmToken = token;
@@ -61,11 +133,8 @@ async function saveFcmTokenToSupabase(token: string) {
     // Token has successfully been associated
     pendingFcmToken = null;
 
-  } catch (error) {
-    console.error(
-      '❌ Unexpected error while saving FCM token:',
-      error
-    );
+  } catch {
+    console.error('Push notification device registration encountered an unexpected error.');
 
     pendingFcmToken = token;
   }
@@ -149,10 +218,7 @@ export async function deactivateCurrentDeviceToken() {
   );
 
   if (error) {
-    console.error(
-      '❌ Failed to deactivate device token:',
-      error
-    );
+    console.error('The current push notification device could not be deactivated.');
 
     throw error;
   }
@@ -163,7 +229,12 @@ export async function deactivateCurrentDeviceToken() {
 // Main push notification initialization
 // --------------------------------------------------
 
-export async function initPushNotifications() {
+export function initPushNotifications(): Promise<void> {
+  pushInitialization ??= initializePushNotifications();
+  return pushInitialization;
+}
+
+async function initializePushNotifications(): Promise<void> {
   try {
 
     // --------------------------------------------------
@@ -202,14 +273,7 @@ export async function initPushNotifications() {
         // Notify application
         // --------------------------------------------------
 
-        window.dispatchEvent(
-          new CustomEvent(
-            'fcm-token-received',
-            {
-              detail: token.value,
-            }
-          )
-        );
+        window.dispatchEvent(new Event('fcm-token-received'));
 
         // --------------------------------------------------
         // Try to associate token immediately
@@ -230,23 +294,8 @@ export async function initPushNotifications() {
 
     await PushNotifications.addListener(
       'registrationError',
-      (error) => {
-
-        console.error(
-          '========================================'
-        );
-
-        console.error(
-          '❌ PUSH NOTIFICATION REGISTRATION ERROR'
-        );
-
-        console.error(
-          error
-        );
-
-        console.error(
-          '========================================'
-        );
+      () => {
+        console.error('Push notification registration failed.');
       }
     );
 
@@ -256,7 +305,9 @@ export async function initPushNotifications() {
 
     await PushNotifications.addListener(
       'pushNotificationReceived',
-      () => undefined
+      (notification) => {
+        void displayForegroundNotification(notification);
+      }
     );
 
     // --------------------------------------------------
@@ -265,8 +316,17 @@ export async function initPushNotifications() {
 
     await PushNotifications.addListener(
       'pushNotificationActionPerformed',
-      () => undefined
+      () => requestNotificationNavigation()
     );
+
+    if (isAndroidApp()) {
+      // Tapping a local notification opens/resumes GridVision, matching the
+      // current push-action behavior. No second routing system is introduced.
+      await LocalNotifications.addListener(
+        'localNotificationActionPerformed',
+        () => requestNotificationNavigation()
+      );
+    }
 
     // --------------------------------------------------
     // 3. CHECK PERMISSION
@@ -303,17 +363,29 @@ export async function initPushNotifications() {
       return;
     }
 
+    if (isAndroidApp()) {
+      const localPermission = await LocalNotifications.checkPermissions();
+      if (localPermission.display !== 'granted') {
+        console.warn('Local notification display permission is unavailable.');
+      } else {
+        await LocalNotifications.createChannel({
+          id: FOREGROUND_CHANNEL_ID,
+          name: 'GridVision Operational Alerts',
+          description: 'Important GridVision operational notifications',
+          importance: 5,
+          visibility: 1,
+          vibration: true,
+        });
+      }
+    }
+
     // --------------------------------------------------
     // 5. REGISTER WITH FCM
     // --------------------------------------------------
 
     await PushNotifications.register();
 
-  } catch (error) {
-
-    console.error(
-      '❌ Push notification initialization failed:',
-      error
-    );
+  } catch {
+    console.error('Push notification initialization failed.');
   }
 }

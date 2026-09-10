@@ -1,5 +1,6 @@
 export {
   ReportActions,
+  loadAllReportRows,
 } from './ReportActions';
 export {
   ReportFilters,

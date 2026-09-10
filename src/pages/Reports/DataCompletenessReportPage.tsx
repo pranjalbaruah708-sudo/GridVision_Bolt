@@ -12,6 +12,7 @@ import {
   getReportPeriodDates,
   getReportPeriodLabel,
   getReportRangeIso,
+  loadAllReportRows,
   ReportActions,
   ReportFilters,
   ReportPageShell,
@@ -118,6 +119,14 @@ export function DataCompletenessReportPage({ onBack }: { onBack: () => void }) {
   }, [aggregates, loadedReport?.filters.threshold]);
 
   const activeFilters = loadedReport?.filters ?? filters;
+  const loadAllRows = useCallback(async () => {
+    if (!loadedReport) return [];
+    const active = loadedReport.filters;
+    const { startIso, endIso } = getReportRangeIso(active);
+    return loadAllReportRows(loadedReport.total, (page, pageSize) => api.getDataCompletenessMissingPage(
+      startIso, endIso, page, pageSize, active.stationId || null, active.feederId || null,
+    ));
+  }, [loadedReport]);
   const stationScope = activeFilters.stationId ? stationById.get(activeFilters.stationId)?.name ?? 'Selected station' : 'All accessible stations';
   const feederScope = activeFilters.feederId ? feederById.get(activeFilters.feederId)?.name ?? 'Selected feeder' : undefined;
 
@@ -128,7 +137,7 @@ export function DataCompletenessReportPage({ onBack }: { onBack: () => void }) {
       onBack={onBack}
       contentRef={contentRef}
       desktopWide
-      actions={<ReportActions title="Data Completeness Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+      actions={<ReportActions title="Data Completeness Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf totalRows={loadedReport?.total ?? resource.rows.length} loadAllRows={loadAllRows} />}
       filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: Boolean(filters.stationId), thresholdApplicable: true }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
     >
       {loadedReport ? <ReportPreview

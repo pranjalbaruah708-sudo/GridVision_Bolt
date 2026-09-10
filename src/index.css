@@ -68,3 +68,224 @@ body {
 .gv-fade-up { animation: gv-fade-up 0.5s ease-out both; }
 .gv-fade-up-delay-1 { animation: gv-fade-up 0.5s ease-out 0.08s both; }
 .gv-fade-up-delay-2 { animation: gv-fade-up 0.5s ease-out 0.16s both; }
+
+/* Desktop-only operator workstations. Mobile/Capacitor styles remain governed by
+   the existing inline/mobile-first presentation above the desktop breakpoint. */
+@media (min-width: 1024px) {
+  .gv-operator-entry-page,
+  .gv-interruption-entry-page {
+    background: #f1f5f9 !important;
+  }
+
+  .gv-operator-entry-header,
+  .gv-interruption-entry-header {
+    padding: 14px 32px !important;
+  }
+
+  .gv-entry-heading-row {
+    width: 100%;
+    gap: 24px;
+  }
+
+  .gv-entry-heading-copy h2 {
+    font-size: 22px !important;
+    line-height: 1.1;
+  }
+
+  .gv-interruption-heading-detail {
+    color: #ffffff !important;
+  }
+
+  .gv-interruption-header-status {
+    color: #ffffff !important;
+  }
+
+  .gv-operator-entry-header .gv-entry-heading-copy p,
+  .gv-operator-entry-header [role="status"] {
+    color: #ffffff !important;
+  }
+
+  .gv-parameter-selector-card {
+    display: grid;
+    grid-template-columns: minmax(240px, 1.25fr) minmax(430px, 2fr);
+    align-items: end;
+    gap: 12px 20px;
+    padding: 16px 18px !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.08) !important;
+  }
+
+  .gv-parameter-selector-heading {
+    display: none !important;
+  }
+
+  .gv-parameter-selector-card > span {
+    grid-column: 2;
+    margin: 0 !important;
+  }
+
+  .gv-parameter-feeder-selector {
+    grid-row: 1 / span 2;
+    margin: 0 !important;
+  }
+
+  .gv-parameter-slot-selector {
+    grid-template-columns: minmax(180px, 1.2fr) minmax(110px, .65fr) auto !important;
+  }
+
+  .gv-parameter-slot-selector > button {
+    width: auto !important;
+    min-width: 190px;
+    padding: 0 16px;
+    display: flex !important;
+    gap: 8px;
+  }
+
+  .gv-parameter-slot-state,
+  .gv-parameter-slot-sync {
+    grid-column: 1 / -1;
+  }
+
+  .gv-parameter-slot-sync {
+    width: max-content;
+  }
+
+  .gv-parameter-workspace {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+    padding: 16px !important;
+    overflow: visible !important;
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.08) !important;
+  }
+
+  .gv-parameter-workspace-heading {
+    grid-column: 1 / -1;
+    margin: -16px -16px 2px;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .gv-parameter-group {
+    display: none;
+    margin: 0;
+    color: #0f3f86;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .gv-parameter-field {
+    display: block !important;
+    padding: 4px 0 !important;
+    border: 0 !important;
+  }
+
+  .gv-parameter-field > label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px !important;
+  }
+
+  .gv-parameter-field > div {
+    width: 100% !important;
+  }
+
+  .gv-operator-draft {
+    margin-left: auto;
+    width: max-content;
+  }
+
+  .gv-operator-save {
+    display: block;
+    width: auto !important;
+    min-width: 170px;
+    margin-left: auto;
+    padding-inline: 24px !important;
+  }
+
+  .gv-interruption-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+
+  .gv-interruption-record-card,
+  .gv-open-interruptions {
+    margin-top: 0 !important;
+  }
+
+  .gv-interruption-record-card {
+    border-radius: 12px !important;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.08) !important;
+  }
+
+  .gv-interruption-record-card > label {
+    display: block !important;
+    margin-bottom: 15px !important;
+  }
+
+  .gv-open-interruptions {
+    min-width: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #fff;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.08);
+  }
+
+  .gv-open-interruption-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 14px;
+    border-radius: 10px !important;
+    padding: 12px !important;
+    box-shadow: none !important;
+  }
+
+  .gv-open-interruption-actions {
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .gv-parameter-workspace {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .gv-parameter-workspace-heading { grid-column: 1 / -1; grid-row: 1; }
+  .gv-parameter-group { display: block; grid-row: 2; padding-top: 2px; }
+  .gv-parameter-group-electrical { grid-column: 1 / 9; }
+  .gv-parameter-group-transformer { grid-column: 9 / 11; }
+  .gv-parameter-group-notes { grid-column: 11 / 13; }
+  .gv-parameter-mw { grid-column: 1 / 3; grid-row: 3; }
+  .gv-parameter-mvar { grid-column: 3 / 5; grid-row: 3; }
+  .gv-parameter-voltage { grid-column: 5 / 7; grid-row: 3; }
+  .gv-parameter-current { grid-column: 7 / 9; grid-row: 3; }
+  .gv-parameter-powerFactor { grid-column: 1 / 3; grid-row: 4; }
+  .gv-parameter-frequency { grid-column: 3 / 5; grid-row: 4; }
+  .gv-parameter-temperature { grid-column: 9 / 11; grid-row: 3; }
+  .gv-parameter-oilLevel { grid-column: 9 / 11; grid-row: 4; }
+  .gv-parameter-tapPosition { grid-column: 9 / 11; grid-row: 5; }
+  .gv-parameter-weather { grid-column: 11 / 13; grid-row: 3; }
+  .gv-parameter-remarks { grid-column: 11 / 13; grid-row: 4 / 6; }
+
+  .gv-interruption-workspace {
+    grid-template-columns: minmax(350px, 2fr) minmax(0, 3fr);
+  }
+
+  .gv-interruption-record-card {
+    display: block;
+  }
+
+  .gv-interruption-draft {
+    grid-column: 1;
+  }
+
+  .gv-open-interruptions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}

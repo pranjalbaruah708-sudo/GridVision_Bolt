@@ -27,8 +27,26 @@ interface NotificationEvent {
   source_synced_at: string | null;
 }
 
-function notificationTitle(event: NotificationEvent): string {
-  if (!event.notification_class || event.notification_class === "LIVE") return "GridVision Notification";
+const MAX_REQUEST_BYTES = 4 * 1024;
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  let difference = leftBytes.length ^ rightBytes.length;
+  const length = Math.max(leftBytes.length, rightBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    difference |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+  return difference === 0;
+}
+
+function isServiceRoleRequest(request: Request, serviceRoleKey: string): boolean {
+  const authorization = request.headers.get("Authorization") ?? "";
+  return constantTimeEqual(authorization, `Bearer ${serviceRoleKey}`);
+}
+
+function notificationTitle(event: NotificationEvent): string | null {
+  if (!event.notification_class || event.notification_class === "LIVE") return null;
   const subject = /restored at/i.test(event.message)
     ? "Feeder Restored"
     : /tripped at/i.test(event.message)
@@ -169,6 +187,13 @@ Deno.serve(async (req) => {
     });
   }
 
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ success: false, error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json", "Allow": "POST" },
+    });
+  }
+
   try {
     // ==================================================
     // Environment variables
@@ -207,6 +232,13 @@ Deno.serve(async (req) => {
       );
     }
 
+    if (!isServiceRoleRequest(req, supabaseServiceRoleKey)) {
+      return new Response(JSON.stringify({ success: false, error: "Unauthorised" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // ==================================================
     // Supabase admin client
     // ==================================================
@@ -234,10 +266,32 @@ Deno.serve(async (req) => {
       notification_event_id?: string;
     } = {};
 
-    try {
-      requestBody = await req.json();
-    } catch {
-      // Empty request body is allowed.
+    const rawBody = await req.text();
+    if (new TextEncoder().encode(rawBody).length > MAX_REQUEST_BYTES) {
+      return new Response(JSON.stringify({ success: false, error: "Request is too large" }), {
+        status: 413,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (rawBody.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(rawBody);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid JSON object");
+        const keys = Object.keys(parsed as Record<string, unknown>);
+        if (keys.some((key) => key !== "notification_event_id")) throw new Error("Unexpected property");
+        const notificationEventId = (parsed as Record<string, unknown>).notification_event_id;
+        if (
+          notificationEventId !== undefined &&
+          (typeof notificationEventId !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(notificationEventId))
+        ) throw new Error("Invalid notification event identifier");
+        requestBody = notificationEventId === undefined ? {} : { notification_event_id: notificationEventId };
+      } catch {
+        return new Response(JSON.stringify({ success: false, error: "Invalid JSON request" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     // ==================================================
@@ -325,9 +379,7 @@ Deno.serve(async (req) => {
 
     for (const recipient of recipients as PendingRecipient[]) {
       try {
-        console.log(
-          `Processing recipient ${recipient.id}`,
-        );
+        console.log("Processing a pending notification recipient.");
 
         // ----------------------------------------------
         // Get notification event
@@ -403,9 +455,7 @@ Deno.serve(async (req) => {
 
         const body = event.message;
 
-        console.log(
-          `Sending FCM notification to device ${device.id}`,
-        );
+        console.log("Sending an FCM notification to a registered device.");
 
         const firebaseResponse =
           await fetch(
@@ -422,21 +472,22 @@ Deno.serve(async (req) => {
                 message: {
                   token: device.fcm_token,
 
-                  notification: {
-                    title,
-                    body,
+                notification: {
+                  ...(title ? { title } : {}),
+                  body,
                   },
 
                   android: {
                     priority: "high",
                     notification: {
-                      sound: "default",
-                      channel_id:
-                        "default",
+                    sound: "default",
+                    channel_id:
+                      "gridvision_urgent",
                     },
                   },
 
-                  data: {
+                data: {
+                  ...(title ? { title } : {}),
                     notification_event_id:
                       event.id,
 
@@ -541,9 +592,7 @@ Deno.serve(async (req) => {
             recipient.id,
           );
 
-        console.log(
-          `✅ Notification sent successfully to recipient ${recipient.id}`,
-        );
+        console.log("Notification sent successfully to its recipient.");
 
         results.push({
           recipient_id:

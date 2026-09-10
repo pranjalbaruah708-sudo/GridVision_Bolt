@@ -3,7 +3,7 @@ import { LockKeyhole } from 'lucide-react';
 import { api, type AppRole, type NotificationDeliveryReportRow, type NotificationDeliveryReportSummary, type OperatorActivityReportRow, type OperatorActivityReportSummary } from '@/services/api';
 import { hasCapability } from '@/security/permissions';
 import { useApp } from '@/context/AppContext';
-import { getReportPeriodDates, getReportPeriodLabel, getReportRangeIso, ReportActions, ReportFilters, ReportPageShell, ReportPreview, type ReportColumn, type ReportFilterValues, type ReportResource, type ReportSummaryCard } from '@/components/reports';
+import { getReportPeriodDates, getReportPeriodLabel, getReportRangeIso, loadAllReportRows, ReportActions, ReportFilters, ReportPageShell, ReportPreview, type ReportColumn, type ReportFilterValues, type ReportResource, type ReportSummaryCard } from '@/components/reports';
 
 const PAGE_SIZE = 50;
 const INITIAL_PERIOD = getReportPeriodDates('today');
@@ -26,9 +26,14 @@ export function OperatorActivityReportPage({ onBack }: { onBack: () => void }) {
     { id: 'state', label: 'Row state', value: (row) => row.activity_state === 'UPDATED' ? 'Subsequently updated' : 'Created', csvValue: (row) => row.activity_state },
   ], []);
   const cards = useMemo<ReportSummaryCard[]>(() => summary ? [{ label: 'Entries created', value: String(summary.entries_created), tone: 'blue' }, { label: 'Rows subsequently updated', value: String(summary.rows_subsequently_updated), tone: 'orange' }, { label: 'Missing expected entries', value: String(summary.missing_expected_entries), tone: summary.missing_expected_entries ? 'red' : 'green' }, { label: 'Active operators', value: String(summary.operators_active), detail: `${summary.stations_active} stations`, tone: 'blue' }] : [], [summary]);
+  const loadAllRows = useCallback(async () => {
+    if (!loaded) return [];
+    const { startIso, endIso } = getReportRangeIso(loaded.filters);
+    return loadAllReportRows(loaded.total, (page, pageSize) => api.getOperatorActivityReportPage(startIso, endIso, page, pageSize, loaded.filters.stationId || null));
+  }, [loaded]);
   if (!hasCapability(role, 'view_all_audit')) return <AdminOnly title="Operator Activity Report" onBack={onBack} />;
   const active = loaded?.filters ?? filters; const scope = active.stationId ? stations.find((station) => station.id === active.stationId)?.name ?? 'Selected station' : 'All accessible stations';
-  return <ReportPageShell title="Operator Activity Report" subtitle="Created and last-updated logbook rows" onBack={onBack} contentRef={ref} desktopWide actions={<ReportActions title="Operator Activity Report" contentRef={ref} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />} filters={<ReportFilters values={filters} options={{ stations, feeders: [] }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}>
+  return <ReportPageShell title="Operator Activity Report" subtitle="Created and last-updated logbook rows" onBack={onBack} contentRef={ref} desktopWide actions={<ReportActions title="Operator Activity Report" contentRef={ref} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf totalRows={loaded?.total ?? resource.rows.length} loadAllRows={loadAllRows} />} filters={<ReportFilters values={filters} options={{ stations, feeders: [] }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}>
     {loaded ? <ReportPreview meta={{ title: 'Operator Activity Report', stationScope: scope, periodLabel: getReportPeriodLabel(active), generatedAt: resource.generatedAt ?? new Date(), appliedFilters: [`From ${active.fromDate}`, `To ${active.toDate}`] }} summaryCards={cards} resource={resource} columns={columns} rowKey={(row) => row.id} onRetry={generate} pagination={{ page: loaded.page, pageSize: PAGE_SIZE, totalRows: loaded.total, onPageChange: (page) => { if (!resource.loading) load(loaded.filters, page, false); } }} /> : <div className="py-8 text-center text-sm text-slate-500">Select the scope and period, then generate the report.</div>}
     {loaded && <p className="mt-4 text-[11px] text-slate-500">“Subsequently updated” identifies a row whose current <code>updated_at</code> is later than <code>created_at</code>; edit history/counts are not available.</p>}
   </ReportPageShell>;
@@ -45,9 +50,16 @@ export function NotificationDeliveryReportPage({ onBack }: { onBack: () => void 
     { id: 'intended', label: 'Intended recipients', align: 'right', value: (row) => String(row.intended_recipients), csvValue: (row) => row.intended_recipients }, { id: 'sent', label: 'Sent', align: 'right', value: (row) => String(row.sent), csvValue: (row) => row.sent }, { id: 'failed', label: 'Failed', align: 'right', value: (row) => String(row.failed), csvValue: (row) => row.failed }, { id: 'pending', label: 'Pending', align: 'right', value: (row) => String(row.pending), csvValue: (row) => row.pending }, { id: 'message', label: 'Delivery message', value: (row) => row.delivery_message ?? '—', csvValue: (row) => row.delivery_message },
   ], []);
   const cards = useMemo<ReportSummaryCard[]>(() => summary ? [{ label: 'Notification events', value: String(summary.events), tone: 'blue' }, { label: 'Intended recipients', value: String(summary.intended_recipients), tone: 'blue' }, { label: 'Sent / failed', value: `${summary.sent} / ${summary.failed}`, tone: summary.failed ? 'red' : 'green' }, { label: 'Pending', value: String(summary.pending), tone: summary.pending ? 'orange' : 'green' }] : [], [summary]);
+  const loadAllRows = useCallback(async () => {
+    if (!loaded) return [];
+    const { startIso, endIso } = getReportRangeIso(loaded.filters);
+    return loadAllReportRows(loaded.total, (page, pageSize) => api.getNotificationDeliveryReportPage(
+      startIso, endIso, page, pageSize, loaded.filters.stationId || null, loaded.filters.status || null,
+    ));
+  }, [loaded]);
   if (!hasCapability(role, 'view_all_audit')) return <AdminOnly title="Notification Delivery Report" onBack={onBack} />;
   const active = loaded?.filters ?? filters; const scope = active.stationId ? stations.find((station) => station.id === active.stationId)?.name ?? 'Selected station' : 'All accessible stations';
-  return <ReportPageShell title="Notification Delivery Report" subtitle="Event-level recipient delivery outcomes" onBack={onBack} contentRef={ref} desktopWide actions={<ReportActions title="Notification Delivery Report" contentRef={ref} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />} filters={<ReportFilters values={filters} options={{ stations, feeders: [], statusOptions: [{ value: 'SENT', label: 'Sent' }, { value: 'FAILED', label: 'Failed' }, { value: 'PENDING', label: 'Pending' }] }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}>
+  return <ReportPageShell title="Notification Delivery Report" subtitle="Event-level recipient delivery outcomes" onBack={onBack} contentRef={ref} desktopWide actions={<ReportActions title="Notification Delivery Report" contentRef={ref} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf totalRows={loaded?.total ?? resource.rows.length} loadAllRows={loadAllRows} />} filters={<ReportFilters values={filters} options={{ stations, feeders: [], statusOptions: [{ value: 'SENT', label: 'Sent' }, { value: 'FAILED', label: 'Failed' }, { value: 'PENDING', label: 'Pending' }] }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}>
     {loaded ? <ReportPreview meta={{ title: 'Notification Delivery Report', stationScope: scope, periodLabel: getReportPeriodLabel(active), generatedAt: resource.generatedAt ?? new Date(), appliedFilters: [`From ${active.fromDate}`, `To ${active.toDate}`, `Status: ${active.status || 'All'}`] }} summaryCards={cards} resource={resource} columns={columns} rowKey={(row) => row.id} onRetry={generate} pagination={{ page: loaded.page, pageSize: PAGE_SIZE, totalRows: loaded.total, onPageChange: (page) => { if (!resource.loading) load(loaded.filters, page, false); } }} /> : <div className="py-8 text-center text-sm text-slate-500">Select the scope and period, then generate the report.</div>}
   </ReportPageShell>;
 }

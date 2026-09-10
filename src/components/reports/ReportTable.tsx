@@ -51,8 +51,8 @@ export function ReportTable<Row>({
 
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      <div className="overflow-x-auto">
-        <table className={`w-full min-w-[560px] text-left text-xs ${desktop ? 'lg:min-w-[1480px]' : ''}`}>
+      <div className="overflow-x-auto" data-report-table-container>
+        <table data-report-table className={`w-full min-w-[560px] text-left text-xs ${desktop ? 'lg:min-w-[1480px]' : ''}`}>
           <thead className={`bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500 ${desktop ? 'lg:sticky lg:top-0 lg:z-10' : ''}`}>
             <tr>
               {columns.map((column) => <th key={column.id} className={`px-3 py-2.5 font-bold ${desktop ? 'lg:whitespace-nowrap lg:px-4 lg:py-3' : ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${column.className ?? ''}`}>{column.label}</th>)}

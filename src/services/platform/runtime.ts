@@ -2,6 +2,8 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 
 export type GridVisionPlatform = 'android' | 'ios' | 'web' | string;
+export const APP_RESUMED_EVENT = 'gv-app-resumed';
+export const APP_BACKGROUND_EVENT = 'gv-app-background';
 
 export const isNativeApp = (): boolean => Capacitor.isNativePlatform();
 export const isWebApp = (): boolean => !isNativeApp();
@@ -25,4 +27,11 @@ export async function minimizeAndroidApp(): Promise<void> {
 export async function addAndroidBackButtonListener(onBack: () => void): Promise<{ remove: () => Promise<void> } | null> {
   if (!isAndroidApp()) return null;
   return CapacitorApp.addListener('backButton', onBack);
+}
+
+export async function addNativeAppStateListener(): Promise<{ remove: () => Promise<void> } | null> {
+  if (!isNativeApp()) return null;
+  return CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+    window.dispatchEvent(new Event(isActive ? APP_RESUMED_EVENT : APP_BACKGROUND_EVENT));
+  });
 }

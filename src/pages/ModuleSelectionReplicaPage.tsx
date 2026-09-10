@@ -24,7 +24,7 @@ interface ModuleSelectionReplicaPageProps {
 type ModuleDefinition = { id: GridVisionModule; title: string; subtitle: string; icon: typeof BookOpen; accent: 'blue' | 'emerald' | 'amber'; enabled: boolean; features: string[] };
 
 const MODULES: ModuleDefinition[] = [
-  { id: 'manual', title: 'Digital Log Books', subtitle: 'Manual substation operations', icon: BookOpen, accent: 'blue', enabled: true, features: ['Log book entries', 'Alerts and Analysis', 'Event recording', 'Audit ready'] },
+  { id: 'manual', title: 'Digital Log Books', subtitle: 'Manual substation operations', icon: BookOpen, accent: 'blue', enabled: true, features: ['Digital operational log books','Interruption & event management','Real-time alerts & analysis','Offline operations with auto-sync','Audit-ready reports & insights'] },
   { id: 'scada', title: 'SCADA Integration', subtitle: 'Live monitoring & control', icon: Monitor, accent: 'emerald', enabled: false, features: ['Real-time monitoring', 'Remote operations', 'Alarms & events', 'Data visualization'] },
   { id: 'shutdown', title: 'Shutdown Management', subtitle: 'Plan, approve & track shutdowns', icon: CalendarClock, accent: 'amber', enabled: false, features: ['Shutdown planning', 'Approvals workflow', 'Progress tracking', 'Compliance reports'] },
 ];

@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile';
 import {
   AlertCircle,
   Eye,
@@ -11,20 +12,28 @@ import {
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/hooks/useAuth';
+import {
+  isAuthCaptchaError,
+  isAuthConnectivityError,
+  isAuthRateLimitError,
+  isInvalidCredentialsError,
+} from '@/services/authErrors';
 import { supabase } from '@/services/supabase';
 
 function getFriendlySignInError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  if (isAuthRateLimitError(error)) {
+    return 'Too many sign-in attempts. Please wait a while and try again.';
+  }
 
-  if (/invalid credentials|invalid login|wrong password/i.test(message)) {
+  if (isAuthCaptchaError(error)) {
+    return 'Please complete the security verification and try again.';
+  }
+
+  if (isInvalidCredentialsError(error)) {
     return 'The email address or password is incorrect.';
   }
 
-  if (/rate limit|too many requests/i.test(message)) {
-    return 'Too many sign-in attempts. Please try again in a little while.';
-  }
-
-  if (/network|fetch|connection|offline|timeout/i.test(message)) {
+  if (isAuthConnectivityError(error)) {
     return 'We could not connect to GridVision. Please check your connection and try again.';
   }
 
@@ -32,13 +41,15 @@ function getFriendlySignInError(error: unknown) {
 }
 
 function getFriendlyRecoveryError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : '';
-
-  if (/rate limit|too many requests/i.test(message)) {
+  if (isAuthRateLimitError(error)) {
     return 'Too many recovery requests. Please try again in a little while.';
   }
 
-  if (/network|fetch|connection|offline|timeout/i.test(message)) {
+  if (isAuthCaptchaError(error)) {
+    return 'Please complete the security verification and try again.';
+  }
+
+  if (isAuthConnectivityError(error)) {
     return 'We could not send recovery instructions. Please check your connection and try again.';
   }
 
@@ -55,14 +66,46 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
+  const [retryCooldown, setRetryCooldown] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaIssue, setCaptchaIssue] = useState(false);
+  const failureCountRef = useRef(0);
+  const retryTimerRef = useRef<number | null>(null);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   const isBusy = signingIn || sendingRecovery;
   const version = import.meta.env.VITE_APP_VERSION as string | undefined;
+  const turnstileSiteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined)?.trim();
+  const turnstileEnabled = Boolean(turnstileSiteKey);
 
   const clearError = () => setError(null);
 
+  const resetCaptcha = useCallback(() => {
+    setCaptchaToken(null);
+    setCaptchaIssue(false);
+    turnstileRef.current?.reset();
+  }, []);
+
+  useEffect(() => () => {
+    if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+  }, []);
+
+  const applyRetryCooldown = () => {
+    failureCountRef.current += 1;
+    const seconds = [0, 1, 2, 4, 8][Math.min(failureCountRef.current - 1, 4)];
+    if (!seconds) return;
+
+    if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+    setRetryCooldown(true);
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetryCooldown(false);
+    }, seconds * 1_000);
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (retryCooldown) return;
     const trimmedEmail = email.trim();
 
     setError(null);
@@ -73,12 +116,23 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       return;
     }
 
+    if (turnstileEnabled && !captchaToken) {
+      setError('Please complete the security verification and try again.');
+      return;
+    }
+
     setSigningIn(true);
     try {
-      await signIn(trimmedEmail, password);
+      await signIn(trimmedEmail, password, captchaToken ?? undefined);
+      failureCountRef.current = 0;
+      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+      setRetryCooldown(false);
     } catch (signInError) {
       setError(getFriendlySignInError(signInError));
+      applyRetryCooldown();
     } finally {
+      if (turnstileEnabled) resetCaptcha();
       setSigningIn(false);
     }
   };
@@ -100,10 +154,16 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
       return;
     }
 
+    if (turnstileEnabled && !captchaToken) {
+      setError('Please complete the security verification and try again.');
+      return;
+    }
+
     setSendingRecovery(true);
     try {
       const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
         redirectTo: passwordResetRedirectUrl,
+        ...(captchaToken ? { captchaToken } : {}),
       });
       if (recoveryError) {
         throw recoveryError;
@@ -115,6 +175,7 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
     } catch (recoveryError) {
       setError(getFriendlyRecoveryError(recoveryError));
     } finally {
+      if (turnstileEnabled) resetCaptcha();
       setSendingRecovery(false);
     }
   };
@@ -173,6 +234,37 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               <AlertCircle aria-hidden="true" className="mt-0.5 h-4.5 w-4.5 shrink-0" />
               <p>{error}</p>
             </div>
+          )}
+
+          {!recoveryMode && retryCooldown && (
+            <p role="status" className="mb-5 text-center text-sm text-slate-600">
+              Please wait a few seconds before trying again.
+            </p>
+          )}
+
+          {turnstileEnabled && (
+            <div className="mb-5 flex justify-center" aria-live="polite">
+              <Turnstile
+                ref={turnstileRef}
+                siteKey={turnstileSiteKey!}
+                options={{ size: 'flexible', theme: 'light' }}
+                onSuccess={(token) => {
+                  setCaptchaToken(token);
+                  setCaptchaIssue(false);
+                }}
+                onExpire={() => setCaptchaToken(null)}
+                onError={() => {
+                  setCaptchaToken(null);
+                  setCaptchaIssue(true);
+                }}
+              />
+            </div>
+          )}
+
+          {turnstileEnabled && captchaIssue && (
+            <p role="status" className="mb-5 text-center text-sm text-slate-600">
+              Please complete the security verification and try again.
+            </p>
           )}
 
           {recoveryMessage && (
@@ -253,6 +345,7 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
                 onClick={() => {
                   setError(null);
                   setRecoveryMessage(null);
+                  resetCaptcha();
                   setRecoveryMode(true);
                 }}
                 className="min-h-10 rounded-lg px-1 text-sm font-semibold text-blue-700 transition hover:text-blue-900 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -261,11 +354,11 @@ export function SignInPage({ auth }: { auth: ReturnType<typeof useAuth> }) {
               </button>
             </div>
 
-            {recoveryMode && <button type="button" disabled={isBusy} onClick={() => { setError(null); setRecoveryMessage(null); setRecoveryMode(false); }} className="min-h-10 rounded-lg px-1 text-sm font-semibold text-blue-700 transition hover:text-blue-900 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50">Back to Sign In</button>}
+            {recoveryMode && <button type="button" disabled={isBusy} onClick={() => { setError(null); setRecoveryMessage(null); resetCaptcha(); setRecoveryMode(false); }} className="min-h-10 rounded-lg px-1 text-sm font-semibold text-blue-700 transition hover:text-blue-900 focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50">Back to Sign In</button>}
 
             <button
               type="submit"
-              disabled={isBusy}
+              disabled={recoveryMode ? sendingRecovery : signingIn || retryCooldown}
               className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0B4CA8] to-[#1675D1] px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(15,91,190,0.24)] transition hover:from-[#0A4292] hover:to-[#1267B9] focus:outline-none focus:ring-4 focus:ring-blue-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {recoveryMode && sendingRecovery ? (

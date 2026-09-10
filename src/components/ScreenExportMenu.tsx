@@ -34,9 +34,8 @@ export default function DownloadPdfButton({ contentRef, title }: DownloadPdfButt
   };
 
   return <>
-    <button type="button" onClick={() => void download()} disabled={exporting} data-export-exclude className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-xl border border-white/25 bg-white/10 px-2.5 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-60 sm:px-3" aria-label="Download current report as PDF">
+    <button type="button" onClick={() => void download()} disabled={exporting} data-export-exclude className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/25 bg-white/10 text-white shadow-sm transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-60" aria-label={exporting ? 'Generating PDF' : 'Download current report as PDF'} title={exporting ? 'Generating PDF' : 'Download PDF'} aria-busy={exporting}>
       {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
-      <span>{exporting ? 'Generating…' : 'Download PDF'}</span>
     </button>
     {message && <div role="status" aria-live="polite" className="fixed bottom-24 left-1/2 z-[70] w-max max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-center text-xs font-semibold text-white shadow-xl">{message}</div>}
   </>;

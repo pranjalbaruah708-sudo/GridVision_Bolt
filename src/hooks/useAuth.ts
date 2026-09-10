@@ -6,7 +6,7 @@ export type AuthState = {
   session: Session | null;
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, captchaToken?: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -27,10 +27,11 @@ export function useAuth(): AuthState {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string) => {
+  const signIn = useCallback(async (email: string, password: string, captchaToken?: string) => {
     const { error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
+      options: captchaToken ? { captchaToken } : undefined,
     });
     if (error) throw error;
   }, []);

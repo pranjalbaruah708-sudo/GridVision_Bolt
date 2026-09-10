@@ -185,7 +185,8 @@ type RetryableResource =
   | "health"
   | "healthDetails"
   | "feederDay"
-  | "feederRange";
+  | "feederRange"
+  | "feederSummary";
 
 type CacheEntry<T> = {
   data: T;
@@ -1503,6 +1504,7 @@ export default function LoadEnergyAnalysis() {
   const [healthDetailResource, setHealthDetailResource] = useState<AnalyticsResource<LoadAnalysisParameterHealthDetailRow[]>>(createAnalyticsResource);
   const [feederDayResource, setFeederDayResource] = useState<AnalyticsResource<LoadAnalysisRow[]>>(createAnalyticsResource);
   const [feederRangeResource, setFeederRangeResource] = useState<AnalyticsResource<LoadAnalysisFeederDailyProfileRow[]>>(createAnalyticsResource);
+  const [feederSummaryResource, setFeederSummaryResource] = useState<AnalyticsResource<LoadAnalysisOverviewRow>>(createAnalyticsResource);
   const serverTrend = trendResource.data ?? [];
   const trendLoading = trendResource.loading;
   const trendError = trendResource.error;
@@ -1518,6 +1520,7 @@ export default function LoadEnergyAnalysis() {
     healthDetails: 0,
     feederDay: 0,
     feederRange: 0,
+    feederSummary: 0,
   });
 
   const beginResourceRequest = useCallback((resource: string, key: string): number => {
@@ -1542,7 +1545,9 @@ export default function LoadEnergyAnalysis() {
               ? healthDetailResource.key
             : resource === "feederDay"
               ? feederDayResource.key
-              : feederRangeResource.key;
+              : resource === "feederRange"
+                ? feederRangeResource.key
+                : feederSummaryResource.key;
 
     if (key) {
       const cache =
@@ -1556,7 +1561,9 @@ export default function LoadEnergyAnalysis() {
                 ? healthDetailCache.current
               : resource === "feederDay"
                 ? feederDayCache.current
-                : feederRangeCache.current;
+                : resource === "feederRange"
+                  ? feederRangeCache.current
+                  : overviewCache.current;
       cache.delete(key);
     }
 
@@ -1564,7 +1571,7 @@ export default function LoadEnergyAnalysis() {
       ...current,
       [resource]: current[resource] + 1,
     }));
-  }, [feederDayResource.key, feederRangeResource.key, healthDetailResource.key, healthResource.key, overviewResource.key, rankingResource.key]);
+  }, [feederDayResource.key, feederRangeResource.key, feederSummaryResource.key, healthDetailResource.key, healthResource.key, overviewResource.key, rankingResource.key]);
   const [
     stations,
     setStations,
@@ -2172,6 +2179,78 @@ const loadTrend = useCallback(
     selectedFeederId,
   ]);
 
+  /* =======================================================
+     FEEDER RANGE SUMMARY
+
+     Keep the feeder KPIs aligned with the From/To controls. The hourly
+     feeder-day resource remains dedicated to the single-day chart/detail.
+  ======================================================= */
+
+  useEffect(() => {
+    if (!selectedFeederId || !feederProfileRangeIsValid) {
+      beginResourceRequest("feederSummary", selectedFeederId ? "INVALID" : "NONE");
+      setFeederSummaryResource(createAnalyticsResource<LoadAnalysisOverviewRow>());
+      return;
+    }
+
+    const profileRange = { startDate: feederProfileStartDate, endDate: feederProfileEndDate };
+    const { startIso, endIso } = rangeToIso(profileRange);
+    const stationId = selectedStationId || null;
+    const key = getAnalyticsCacheKey("overview", stationId, selectedFeederId, startIso, endIso);
+    const generation = beginResourceRequest("feederSummary", key);
+
+    if (overviewResource.key === key) {
+      setFeederSummaryResource({
+        data: overviewResource.data,
+        loading: overviewResource.loading,
+        error: overviewResource.error,
+        key,
+        fetchedAt: overviewResource.fetchedAt,
+      });
+      return;
+    }
+
+    const cached = readAnalyticsCache(overviewCache.current, key, isRangeCurrent(profileRange));
+    setFeederSummaryResource((current) => ({
+      data: cached ?? (current.key === key ? current.data : null),
+      loading: !cached,
+      error: null,
+      key,
+      fetchedAt: cached ? Date.now() : current.key === key ? current.fetchedAt : null,
+    }));
+    if (cached) return;
+
+    void api.getLoadAnalysisOverview(startIso, endIso, stationId, selectedFeederId)
+      .then((data) => {
+        if (!isCurrentResourceGeneration("feederSummary", generation, key)) return;
+        writeAnalyticsCache(overviewCache.current, key, data);
+        setFeederSummaryResource({ data, loading: false, error: null, key, fetchedAt: Date.now() });
+      })
+      .catch((requestError: unknown) => {
+        if (!isCurrentResourceGeneration("feederSummary", generation, key)) return;
+        setFeederSummaryResource((current) => ({
+          ...current,
+          loading: false,
+          error: requestError instanceof Error ? requestError.message : "Could not load feeder summary.",
+          key,
+        }));
+      });
+  }, [
+    beginResourceRequest,
+    feederProfileEndDate,
+    feederProfileRangeIsValid,
+    feederProfileStartDate,
+    isCurrentResourceGeneration,
+    overviewResource.data,
+    overviewResource.error,
+    overviewResource.fetchedAt,
+    overviewResource.key,
+    overviewResource.loading,
+    resourceRetryVersions.feederSummary,
+    selectedFeederId,
+    selectedStationId,
+  ]);
+
   useEffect(() => {
   void loadTrend();
 }, [loadTrend]);
@@ -2721,95 +2800,14 @@ const loadTrend = useCallback(
       ]
     );
 
-  const feederPeak =
-    useMemo(
-      () => {
-        if (
-          !selectedFeederId
-        ) {
-          return {
-            value: null,
-            timestamp: null,
-          };
-        }
-
-        return findPeakDemand(
-          buildHourlyMw(
-            selectedFeederRows,
-            new Set([
-              selectedFeederId,
-            ])
-          )
-        );
-      },
-      [
-        selectedFeederRows,
-        selectedFeederId,
-      ]
-    );
-
-  const feederMinVoltage =
-    useMemo(
-      () =>
-        findMinimumMetric(
-          selectedFeederRows,
-          (row) =>
-            row.voltage_kv
-        ),
-      [
-        selectedFeederRows,
-      ]
-    );
-
-  const feederMaxCurrent =
-    useMemo(
-      () =>
-        findMaximumMetric(
-          selectedFeederRows,
-          (row) =>
-            row.current_a
-        ),
-      [
-        selectedFeederRows,
-      ]
-    );
-
-  const feederMinPf =
-    useMemo(
-      () =>
-        findMinimumMetric(
-          selectedFeederRows,
-          (row) =>
-            row.power_factor
-        ),
-      [
-        selectedFeederRows,
-      ]
-    );
-
-  const feederCompleteness =
-    useMemo(
-      () =>
-        selectedFeederId
-          ? getScopeCompleteness(
-              selectedFeederRows,
-              new Set([
-                selectedFeederId,
-              ]),
-              {
-                startDate:
-                  feederProfileDate,
-                endDate:
-                  feederProfileDate,
-              }
-            )
-          : null,
-      [
-        selectedFeederRows,
-        selectedFeederId,
-        feederProfileDate,
-      ]
-    );
+  const feederSummary = feederSummaryResource.data;
+  const feederParameterOption = FEEDER_PARAMETERS.find((option) => option.value === feederParameter);
+  const feederCurveLabel = feederParameterOption
+    ? `${feederParameterOption.label}${feederParameterOption.unit && feederParameterOption.unit !== feederParameterOption.label ? ` (${feederParameterOption.unit})` : ''}`
+    : feederParameter;
+  const feederCurveDetail = feederProfileIsRange
+    ? `${feederParameter === "VOLTAGE" || feederParameter === "PF" ? "Daily minimum" : "Daily maximum"} · ${formatDate(feederProfileStartDate)} to ${formatDate(feederProfileEndDate)}`
+    : `Hourly readings · ${formatDate(feederProfileDate)}`;
 
   /* =======================================================
      CUSTOM PERIOD
@@ -3771,14 +3769,14 @@ const loadTrend = useCallback(
           <AnalysisCard>
             <CardUpdatingOverlay
               active={
-                feederProfileIsRange
+                feederSummaryResource.loading || (feederProfileIsRange
                   ? feederRangeResource.loading
-                  : feederDetailLoading
+                  : feederDetailLoading)
               }
               hasData={
-                feederProfileIsRange
+                feederSummary !== null || (feederProfileIsRange
                   ? feederRangeProfile.length > 0
-                  : selectedFeederRows.length > 0
+                  : selectedFeederRows.length > 0)
               }
             />
             <div
@@ -3800,6 +3798,10 @@ const loadTrend = useCallback(
                   <CardErrorNotice onRetry={() => retryResource("feederRange")} />
                 )}
 
+              {feederSummaryResource.error && (
+                <CardErrorNotice onRetry={() => retryResource("feederSummary")} />
+              )}
+
               {feederDetailLoading && !feederDayResource.data ? (
                 <CardSkeleton rows={5} minHeight={320} />
               ) : (
@@ -3816,11 +3818,10 @@ const loadTrend = useCallback(
                 <MiniMetric
                   label="Peak MW"
                   value={
-                    feederPeak.value ===
-                    null
+                    feederSummary?.peak_mw == null
                       ? "—"
                       : `${formatNumber(
-                          feederPeak.value
+                          feederSummary.peak_mw
                         )} MW`
                   }
                 />
@@ -3828,11 +3829,10 @@ const loadTrend = useCallback(
                 <MiniMetric
                   label="Min Voltage"
                   value={
-                    feederMinVoltage.value ===
-                    null
+                    feederSummary?.minimum_voltage_kv == null
                       ? "—"
                       : `${formatNumber(
-                          feederMinVoltage.value
+                          feederSummary.minimum_voltage_kv
                         )} kV`
                   }
                 />
@@ -3840,11 +3840,10 @@ const loadTrend = useCallback(
                 <MiniMetric
                   label="Max Current"
                   value={
-                    feederMaxCurrent.value ===
-                    null
+                    feederSummary?.maximum_current_a == null
                       ? "—"
                       : `${formatNumber(
-                          feederMaxCurrent.value
+                          feederSummary.maximum_current_a
                         )} A`
                   }
                 />
@@ -3852,10 +3851,9 @@ const loadTrend = useCallback(
                 <MiniMetric
                   label="Min PF"
                   value={
-                    feederMinPf.value ===
-                    null
+                    feederSummary?.minimum_power_factor == null
                       ? "—"
-                      : feederMinPf.value.toFixed(
+                      : feederSummary.minimum_power_factor.toFixed(
                           2
                         )
                   }
@@ -3864,8 +3862,8 @@ const loadTrend = useCallback(
                 <MiniMetric
                   label="Completeness"
                   value={
-                    feederCompleteness
-                      ? `${feederCompleteness.percent.toFixed(
+                    feederSummary
+                      ? `${feederSummary.completeness_percent.toFixed(
                           1
                         )}%`
                       : "—"
@@ -4029,6 +4027,17 @@ const loadTrend = useCallback(
                     )
                   )}
                 </select>
+              </div>
+
+              <div
+                data-pdf-kind="row"
+                data-pdf-label="Curve"
+                data-pdf-value={feederCurveLabel}
+                data-pdf-detail={feederCurveDetail}
+                className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs"
+              >
+                <span className="font-bold text-blue-800">Curve: {feederCurveLabel}</span>
+                <span className="font-medium text-slate-600">{feederCurveDetail}</span>
               </div>
 
               <div

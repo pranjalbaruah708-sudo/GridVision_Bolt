@@ -1,7 +1,7 @@
 
 [functions.send-notification]
 enabled = true
-verify_jwt = false
+verify_jwt = true
 import_map = "./functions/send-notification/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -23,3 +23,12 @@ enabled = true
 # its own authenticated caller and role verification for every POST request.
 verify_jwt = false
 entrypoint = "./functions/resend-setup-email/index.ts"
+
+[functions.send-pending-notifications]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/send-pending-notifications/index.ts"
+
+# Password Verification Attempt Auth Hooks require a higher Supabase plan.
+# The database function remains for future approved use, but must stay inactive
+# for the current Free-plan deployment.

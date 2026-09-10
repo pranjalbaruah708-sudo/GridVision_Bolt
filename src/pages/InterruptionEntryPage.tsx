@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -29,11 +30,19 @@ import {
   OFFLINE_QUEUE_CHANGED_EVENT,
   type QueuedOp,
 } from '@/services/offline';
+import {
+  beginInterruptionDraftSession,
+  deleteInterruptionEntryDraft,
+  readInterruptionEntryDraft,
+  writeInterruptionEntryDraft,
+} from '@/services/operationalDrafts';
 
 import type {
   Feeder,
   Interruption,
 } from '@/types';
+import { formatCacheAge, readOperationalSnapshot, writeOperationalSnapshot } from '@/services/operationalReadCache';
+import { APP_BACKGROUND_EVENT } from '@/services/platform/runtime';
 
 /* =========================================================
    INTERRUPTION REASONS
@@ -73,7 +82,7 @@ type DbInterruption = Interruption & {
 };
 
 type VisibleInterruption = Interruption & {
-  syncStatus?: 'SYNCED' | 'PENDING' | 'FAILED';
+  syncStatus?: 'SYNCED' | 'CACHED' | 'PENDING' | 'NEEDS_ATTENTION';
   queuedOperation?: QueuedOp;
 };
 
@@ -95,6 +104,44 @@ function currentLocalDateTime(): string {
   return local
     .toISOString()
     .slice(0, 16);
+}
+
+function addLocalMinutes(value: string, minutes: number): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return currentLocalDateTime();
+  date.setMinutes(date.getMinutes() + minutes);
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
+}
+
+function minimumEtrLocalDateTime(interruptionTime?: string | null): string {
+  const nextMinute = addLocalMinutes(currentLocalDateTime(), 1);
+  if (!interruptionTime) return nextMinute;
+  const localInterruptionTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(interruptionTime)
+    ? interruptionTime
+    : isoToLocalDateTimeInput(interruptionTime);
+  const afterInterruption = addLocalMinutes(localInterruptionTime, 1);
+  return new Date(afterInterruption).getTime() > new Date(nextMinute).getTime()
+    ? afterInterruption
+    : nextMinute;
+}
+
+function isoToLocalDateTimeInput(value: string | null | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
+}
+
+function etrExceededText(etr: string | null | undefined): string | null {
+  if (!etr) return null;
+  const exceededMinutes = Math.floor((Date.now() - new Date(etr).getTime()) / 60_000);
+  if (!Number.isFinite(exceededMinutes) || exceededMinutes < 0) return null;
+  if (exceededMinutes < 60) return `ETR exceeded by ${exceededMinutes} min`;
+  const hours = Math.floor(exceededMinutes / 60);
+  const minutes = exceededMinutes % 60;
+  return `ETR exceeded by ${hours}h${minutes ? ` ${minutes}m` : ''}`;
 }
 
 function localInputToISO(
@@ -263,6 +310,18 @@ export function InterruptionEntryPage({
   ] = useState(
     currentLocalDateTime()
   );
+  const [etr, setEtr] = useState('');
+  const [tripDraftStatus, setTripDraftStatus] = useState<'SAVING' | 'SAVED' | 'RESTORED' | 'FAILED' | null>(null);
+  const tripDraftDirtyRef = useRef(false);
+  const tripDraftHydratedRef = useRef<string | null>(null);
+  const tripDraftWriteEpochRef = useRef<number | null>(null);
+  const latestTripDraftRef = useRef({ feederId, reason, otherReason, tripTime, etr });
+  latestTripDraftRef.current = { feederId, reason, otherReason, tripTime, etr };
+
+  const markTripDraftDirty = () => {
+    tripDraftDirtyRef.current = true;
+    setTripDraftStatus('SAVING');
+  };
 
   /* =======================================================
      OPEN INTERRUPTIONS
@@ -274,6 +333,8 @@ export function InterruptionEntryPage({
   ] = useState<
     Interruption[]
   >([]);
+  const [serverSnapshotCachedAt, setServerSnapshotCachedAt] = useState<string | null>(null);
+  const [usingCachedServerSnapshot, setUsingCachedServerSnapshot] = useState(false);
 
   const [queueRevision, setQueueRevision] = useState(0);
 
@@ -297,6 +358,9 @@ export function InterruptionEntryPage({
   ] = useState(
     false
   );
+  const [etrTime, setEtrTime] = useState('');
+  const [editingEtr, setEditingEtr] = useState(false);
+  const [updatingEtr, setUpdatingEtr] = useState(false);
 
   const [
     error,
@@ -329,7 +393,7 @@ export function InterruptionEntryPage({
     selectedInterruption,
     setSelectedInterruption,
   ] = useState<
-    Interruption | null
+    VisibleInterruption | null
   >(null);
 
   const [
@@ -541,16 +605,11 @@ export function InterruptionEntryPage({
           feeders
         );
 
-        setFeederId(
-          ''
-        );
+        setFeederId((current) => feeders.some((feeder) => feeder.id === current) ? current : '');
       } catch (
         e
       ) {
-        console.error(
-          'Failed to load operator station:',
-          e
-        );
+        console.error('The operator station could not be loaded.');
 
         if (
           !cancelled
@@ -601,8 +660,61 @@ export function InterruptionEntryPage({
   }, [
     stations,
     authorizedFeeders,
-    online,
   ]);
+
+  useEffect(() => {
+    if (!operatorUserId || !operatorStationId || stationLoading) return;
+    const hydrationKey = `${operatorUserId}:${operatorStationId}`;
+    if (tripDraftHydratedRef.current === hydrationKey) return;
+    tripDraftHydratedRef.current = hydrationKey;
+    tripDraftWriteEpochRef.current = beginInterruptionDraftSession(operatorUserId, operatorStationId);
+    let cancelled = false;
+    void readInterruptionEntryDraft(operatorUserId, operatorStationId).then((draft) => {
+      if (cancelled || tripDraftHydratedRef.current !== hydrationKey || !draft) return;
+      if (draft.feederId && !stationFeeders.some((feeder) => feeder.id === draft.feederId)) return;
+      setFeederId(draft.feederId);
+      setReason(draft.reason);
+      setOtherReason(draft.otherReason);
+      setTripTime(draft.tripTime);
+      setEtr(draft.etr ?? '');
+      setLastPromptKey(`${draft.feederId}|${draft.reason}|${draft.otherReason.trim()}|${draft.tripTime}|${draft.etr ?? ''}`);
+      tripDraftDirtyRef.current = true;
+      setTripDraftStatus('RESTORED');
+    }).catch(() => { if (!cancelled && tripDraftHydratedRef.current === hydrationKey) setTripDraftStatus('FAILED'); });
+    return () => { cancelled = true; };
+  }, [operatorStationId, operatorUserId, stationFeeders, stationLoading]);
+
+  useEffect(() => {
+    if (!operatorUserId || !operatorStationId || !tripDraftDirtyRef.current) return;
+    const snapshot = { ...latestTripDraftRef.current };
+    setTripDraftStatus('SAVING');
+    const timer = window.setTimeout(() => {
+      if (!tripDraftDirtyRef.current) return;
+      const writeEpoch = tripDraftWriteEpochRef.current ?? undefined;
+      void writeInterruptionEntryDraft({ userId: operatorUserId, stationId: operatorStationId, ...snapshot }, writeEpoch)
+        .then(() => { if (tripDraftDirtyRef.current) setTripDraftStatus('SAVED'); })
+        .catch(() => setTripDraftStatus('FAILED'));
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [etr, feederId, operatorStationId, operatorUserId, otherReason, reason, tripTime]);
+
+  useEffect(() => {
+    const persistLatest = () => {
+      if (operatorUserId && operatorStationId && tripDraftDirtyRef.current) {
+        void writeInterruptionEntryDraft({ userId: operatorUserId, stationId: operatorStationId, ...latestTripDraftRef.current }, tripDraftWriteEpochRef.current ?? undefined).catch(() => undefined);
+      }
+    };
+    const onVisibilityChange = () => { if (document.visibilityState === 'hidden') persistLatest(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', persistLatest);
+    window.addEventListener(APP_BACKGROUND_EVENT, persistLatest);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', persistLatest);
+      window.removeEventListener(APP_BACKGROUND_EVENT, persistLatest);
+      persistLatest();
+    };
+  }, [operatorStationId, operatorUserId]);
 
   useEffect(() => {
     const refreshQueue = () => setQueueRevision((revision) => revision + 1);
@@ -673,10 +785,22 @@ export function InterruptionEntryPage({
     const restores = queuedInterruptionOps.filter((op) => op.operationType === 'RESTORE_INTERRUPTION');
     const locallyRestoredIds = new Set(restores.map((op) => op.localEntityId).filter((id): id is string => Boolean(id)));
     const serverRestoredIds = new Set(restores.map((op) => op.serverEntityId ?? op.filter?.id).filter((id): id is string => Boolean(id)));
+    const etrUpdates = new Map<string, QueuedOp>();
+    queuedInterruptionOps.filter((op) => op.operationType === 'UPDATE_INTERRUPTION_ETR').forEach((op) => {
+      const targetId = op.serverEntityId ?? op.filter?.id;
+      if (targetId) etrUpdates.set(targetId, op);
+    });
 
     const serverRows = serverOpenInterruptions
       .filter((row) => !serverRestoredIds.has(row.id))
-      .map((row) => ({ ...row, syncStatus: 'SYNCED' as const }));
+      .map((row) => {
+        const update = etrUpdates.get(row.id);
+        const body = update?.body && typeof update.body === 'object' && !Array.isArray(update.body) ? update.body as Record<string, unknown> : null;
+        return { ...row, ...(body && ('etr' in body) ? { etr: typeof body.etr === 'string' ? body.etr : null } : {}),
+          syncStatus: update ? (update.syncState === 'NEEDS_ATTENTION' ? 'NEEDS_ATTENTION' as const : 'PENDING' as const)
+            : usingCachedServerSnapshot ? 'CACHED' as const : 'SYNCED' as const,
+          ...(update ? { queuedOperation: update } : {}) };
+      });
 
     const localRows = queuedInterruptionOps
       .filter((op) => op.operationType === 'ADD_INTERRUPTION' && op.localEntityId && !locallyRestoredIds.has(op.localEntityId))
@@ -696,7 +820,7 @@ export function InterruptionEntryPage({
           remarks: typeof body.remarks === 'string' ? body.remarks : null,
           current_status: 'OPEN',
           etr: typeof body.etr === 'string' ? body.etr : null,
-          syncStatus: op.retryCount > 0 ? 'FAILED' : 'PENDING',
+          syncStatus: op.syncState === 'NEEDS_ATTENTION' ? 'NEEDS_ATTENTION' : 'PENDING',
           queuedOperation: op,
         }];
       });
@@ -704,9 +828,9 @@ export function InterruptionEntryPage({
     const serverClientIds = new Set(serverRows.map((row) => row.client_operation_id).filter(Boolean));
     return [...localRows.filter((row) => !serverClientIds.has(row.queuedOperation?.clientOperationId)), ...serverRows]
       .sort((a, b) => +new Date(b.interruption_start) - +new Date(a.interruption_start));
-  }, [operatorStationId, queuedInterruptionOps, serverOpenInterruptions]);
+  }, [operatorStationId, queuedInterruptionOps, serverOpenInterruptions, usingCachedServerSnapshot]);
 
-  const failedInterruptionChanges = queuedInterruptionOps.filter((op) => op.retryCount > 0).length;
+  const failedInterruptionChanges = queuedInterruptionOps.filter((op) => op.syncState === 'NEEDS_ATTENTION').length;
 
   /* =======================================================
      OPEN FEEDER IDS
@@ -783,6 +907,24 @@ export function InterruptionEntryPage({
           return;
         }
 
+        const cacheKey = `open-interruptions|${operatorStationId}`;
+        if (!online) {
+          const snapshot = operatorUserId ? readOperationalSnapshot<Interruption[]>(operatorUserId, cacheKey) : null;
+          if (snapshot) {
+            setServerOpenInterruptions(snapshot.value);
+            setServerSnapshotCachedAt(snapshot.cachedAt);
+            setUsingCachedServerSnapshot(true);
+            setError(null);
+          } else {
+            setServerOpenInterruptions([]);
+            setServerSnapshotCachedAt(null);
+            setUsingCachedServerSnapshot(false);
+            setError('No cached open-interruption data is available on this device. Connect once to load it.');
+          }
+          setLoading(false);
+          return;
+        }
+
         setLoading(
           true
         );
@@ -829,13 +971,15 @@ export function InterruptionEntryPage({
           setServerOpenInterruptions(
             rows
           );
+          if (operatorUserId) {
+            const snapshot = writeOperationalSnapshot(operatorUserId, cacheKey, rows.slice(0, 200));
+            setServerSnapshotCachedAt(snapshot.cachedAt);
+          }
+          setUsingCachedServerSnapshot(false);
         } catch (
           e
         ) {
-          console.error(
-            'Failed to load open interruptions:',
-            e
-          );
+          console.error('Open interruptions could not be loaded.');
 
           setError(
             e instanceof Error
@@ -850,6 +994,8 @@ export function InterruptionEntryPage({
       },
       [
         operatorStationId,
+        operatorUserId,
+        online,
       ]
     );
 
@@ -889,7 +1035,8 @@ export function InterruptionEntryPage({
       `${feederId}|` +
       `${reason}|` +
       `${otherReason.trim()}|` +
-      `${tripTime}`;
+      `${tripTime}|` +
+      `${etr}`;
 
     if (
       promptKey ===
@@ -910,6 +1057,7 @@ export function InterruptionEntryPage({
     reason,
     otherReason,
     tripTime,
+    etr,
     lastPromptKey,
   ]);
 
@@ -976,6 +1124,24 @@ export function InterruptionEntryPage({
       return;
     }
 
+    if (new Date(tripTime).getTime() > Date.now()) {
+      setShowTripConfirmation(false);
+      setError('Interruption time cannot be in the future.');
+      return;
+    }
+
+    if (etr && new Date(etr).getTime() <= Date.now()) {
+      setShowTripConfirmation(false);
+      setError('ETR must be later than the current date and time.');
+      return;
+    }
+
+    if (etr && new Date(etr).getTime() <= new Date(tripTime).getTime()) {
+      setShowTripConfirmation(false);
+      setError('ETR must be later than the interruption time.');
+      return;
+    }
+
     setCreating(
       true
     );
@@ -1005,6 +1171,10 @@ export function InterruptionEntryPage({
             interruption_end:
               null,
 
+            etr: etr
+              ? localInputToISO(etr)
+              : null,
+
             cause:
               reason,
 
@@ -1022,6 +1192,15 @@ export function InterruptionEntryPage({
       if (!created.id.startsWith('local:int:')) {
         setServerOpenInterruptions((current) => [created, ...current]);
       }
+
+      tripDraftDirtyRef.current = false;
+      try {
+        await deleteInterruptionEntryDraft(operatorUserId, operatorStationId);
+        setTripDraftStatus(null);
+      } catch {
+        setTripDraftStatus('FAILED');
+      }
+      tripDraftWriteEpochRef.current = beginInterruptionDraftSession(operatorUserId, operatorStationId);
 
       setShowTripConfirmation(
         false
@@ -1043,16 +1222,15 @@ export function InterruptionEntryPage({
         currentLocalDateTime()
       );
 
+      setEtr('');
+
       setLastPromptKey(
         ''
       );
     } catch (
       e
     ) {
-      console.error(
-        'Failed to create interruption:',
-        e
-      );
+      console.error('The interruption could not be created.');
 
       setError(
         e instanceof Error
@@ -1072,7 +1250,7 @@ export function InterruptionEntryPage({
 
   function openRestoreModal(
     interruption:
-      Interruption
+      VisibleInterruption
   ) {
     setSelectedInterruption(
       interruption
@@ -1081,6 +1259,39 @@ export function InterruptionEntryPage({
     setRestoreTime(
       currentLocalDateTime()
     );
+    setEtrTime(isoToLocalDateTimeInput(interruption.etr));
+    setEditingEtr(false);
+  }
+
+  async function saveEtr(nextEtrOverride?: string | null) {
+    if (!selectedInterruption || !operatorUserId) return;
+    const interruptionStart = getInterruptionStart(selectedInterruption);
+    const nextEtr = nextEtrOverride !== undefined
+      ? nextEtrOverride
+      : etrTime ? localInputToISO(etrTime) : null;
+    if (nextEtr && new Date(nextEtr).getTime() <= Date.now()) {
+      setError('ETR must be later than the current date and time.');
+      return;
+    }
+    if (nextEtr && interruptionStart && new Date(nextEtr).getTime() <= new Date(interruptionStart).getTime()) {
+      setError('ETR must be later than the interruption time.');
+      return;
+    }
+    setUpdatingEtr(true);
+    setError(null);
+    try {
+      await api.updateInterruptionEtr(selectedInterruption.id, nextEtr);
+      setServerOpenInterruptions((current) => current.map((item) => item.id === selectedInterruption.id ? { ...item, etr: nextEtr } : item));
+      setSelectedInterruption((current) => current ? { ...current, etr: nextEtr,
+        syncStatus: selectedInterruption.id.startsWith('local:int:') || !online ? 'PENDING' : current.syncStatus } : null);
+      setQueueRevision((current) => current + 1);
+      setEtrTime(isoToLocalDateTimeInput(nextEtr));
+      setEditingEtr(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update ETR.');
+    } finally {
+      setUpdatingEtr(false);
+    }
   }
 
   /* =======================================================
@@ -1152,10 +1363,7 @@ export function InterruptionEntryPage({
     } catch (
       e
     ) {
-      console.error(
-        'Failed to restore interruption:',
-        e
-      );
+      console.error('The interruption could not be restored.');
 
       setError(
         e instanceof Error
@@ -1175,6 +1383,7 @@ export function InterruptionEntryPage({
 
   return (
     <div
+      className="gv-interruption-entry-page"
       style={{
         minHeight:
           '100vh',
@@ -1194,7 +1403,7 @@ export function InterruptionEntryPage({
       ==================================================== */}
 
       <div
-        className="lg:!rounded-none lg:!border-b lg:!border-slate-200 lg:!bg-white lg:!text-slate-900 lg:!shadow-none"
+        className="gv-interruption-entry-header lg:!rounded-none lg:!border-b lg:!border-slate-200 lg:!bg-white lg:!text-slate-900 lg:!shadow-none"
         style={{
           background:
             'linear-gradient(135deg,#0D47A1,#1565C0)',
@@ -1222,6 +1431,7 @@ export function InterruptionEntryPage({
         }}
       >
         <div
+          className="gv-entry-heading-row"
           style={{
             display:
               'flex',
@@ -1249,6 +1459,7 @@ export function InterruptionEntryPage({
             />
           </button>
 
+          <div className="gv-entry-heading-copy">
           <h2
             style={{
               margin:
@@ -1264,7 +1475,17 @@ export function InterruptionEntryPage({
             Interruption Entry
           </h2>
 
+          <p className="gv-interruption-heading-detail hidden lg:block lg:mt-1 lg:text-sm lg:font-medium">Record and manage feeder interruptions</p>
+          <p className="gv-interruption-heading-detail hidden lg:block lg:mt-0.5 lg:text-xs lg:font-semibold">{stationLoading ? 'Loading station...' : operatorStationName}</p>
+          </div>
+
+          <div className="gv-interruption-header-status hidden items-center gap-5 text-xs font-bold lg:flex" role="status" aria-live="polite">
+            <span className="inline-flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-500'}`} />{online ? 'Online' : 'Offline'}</span>
+            <span className="inline-flex items-center gap-2">{pending > 0 ? <UploadCloud className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}{pending > 0 ? `${pending} pending` : 'All changes synced'}</span>
+          </div>
+
           <CalendarDays
+            className="lg:hidden"
             size={
               24
             }
@@ -1272,7 +1493,7 @@ export function InterruptionEntryPage({
         </div>
 
         <div
-          className="lg:!border-slate-200 lg:!bg-slate-50"
+          className="lg:hidden lg:!border-slate-200 lg:!bg-slate-50"
           style={{
             marginTop:
               18,
@@ -1336,7 +1557,7 @@ export function InterruptionEntryPage({
       ==================================================== */}
 
       <div
-        className="lg:mx-auto lg:w-full lg:max-w-6xl lg:px-8"
+        className="lg:mx-auto lg:w-full lg:max-w-7xl lg:px-8"
         style={{
           flex:
             1,
@@ -1354,7 +1575,7 @@ export function InterruptionEntryPage({
         <div
           role="status"
           aria-live="polite"
-          className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold lg:ml-auto lg:max-w-xl ${
+          className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold lg:ml-auto lg:max-w-xl ${online && pending === 0 ? 'lg:hidden ' : ''}${
             online
               ? pending > 0
                 ? 'border-blue-200 bg-blue-50 text-blue-800'
@@ -1378,6 +1599,8 @@ export function InterruptionEntryPage({
           </span>
         </div>
 
+        {!online && serverSnapshotCachedAt ? <p className="mb-3 text-[11px] font-medium text-slate-500">Open-interruption context is cached server data · Updated {formatCacheAge(serverSnapshotCachedAt)}. Local Pending Sync changes are shown separately.</p> : null}
+
         {stationScopeError && (
           <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-900">
             {stationScopeError}
@@ -1387,7 +1610,7 @@ export function InterruptionEntryPage({
         {failedInterruptionChanges > 0 && (
           <div role="alert" className="mb-3 flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-semibold text-red-800">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            Sync Failed · {failedInterruptionChanges} interruption change{failedInterruptionChanges === 1 ? '' : 's'} retained for retry.
+            Needs Attention · {failedInterruptionChanges} interruption change{failedInterruptionChanges === 1 ? '' : 's'} retained safely for review.
           </div>
         )}
 
@@ -1494,7 +1717,9 @@ export function InterruptionEntryPage({
             RECORD INTERRUPTION CARD
         ================================================== */}
 
+        <div className="gv-interruption-workspace">
         <div
+          className="gv-interruption-record-card"
           style={{
             background:
               '#ffffff',
@@ -1645,11 +1870,12 @@ export function InterruptionEntryPage({
 
                 onChange={(
                   e
-                ) =>
+                ) => {
+                  markTripDraftDirty();
                   setFeederId(
                     e.target.value
-                  )
-                }
+                  );
+                }}
 
                 disabled={
                   stationLoading ||
@@ -1844,13 +2070,16 @@ export function InterruptionEntryPage({
                   tripTime
                 }
 
+                max={currentLocalDateTime()}
+
                 onChange={(
                   e
-                ) =>
+                ) => {
+                  markTripDraftDirty();
                   setTripTime(
                     e.target.value
-                  )
-                }
+                  );
+                }}
 
                 style={{
                   width:
@@ -1888,6 +2117,32 @@ export function InterruptionEntryPage({
                 }}
               />
             </div>
+          </label>
+
+          <label style={{ display: 'block', marginTop: 12 }}>
+            <span style={{ display: 'block', marginBottom: 6, fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>
+              Estimated Restoration Time (ETR) · Optional
+            </span>
+            <div style={{ position: 'relative' }}>
+              <Clock3 size={18} color="#64748B" style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+              <input
+                aria-label="Estimated Restoration Time (ETR)"
+                type="datetime-local"
+                value={etr}
+                min={minimumEtrLocalDateTime(tripTime)}
+                onChange={(event) => { markTripDraftDirty(); setEtr(event.target.value); }}
+                style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #CBD5E1', borderRadius: 12, padding: '12px 12px 12px 42px', background: '#F8FAFC', color: '#1E293B', fontSize: 14, fontWeight: 600, outline: 'none', minHeight: 46 }}
+              />
+            </div>
+            {etr && (
+              <button
+                type="button"
+                onClick={() => { markTripDraftDirty(); setEtr(''); }}
+                style={{ marginTop: 6, border: 0, padding: 0, background: 'transparent', color: '#B91C1C', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Clear ETR
+              </button>
+            )}
           </label>
 
           {/* =================================================
@@ -1940,6 +2195,8 @@ export function InterruptionEntryPage({
                 ) => {
                   const value =
                     e.target.value;
+
+                  markTripDraftDirty();
 
                   setReason(
                     value
@@ -2086,11 +2343,12 @@ export function InterruptionEntryPage({
 
                 onChange={(
                   e
-                ) =>
+                ) => {
+                  markTripDraftDirty();
                   setOtherReason(
                     e.target.value
-                  )
-                }
+                  );
+                }}
 
                 placeholder="Enter interruption reason"
 
@@ -2142,11 +2400,18 @@ export function InterruptionEntryPage({
           )}
         </div>
 
+        {tripDraftStatus && (
+          <div role="status" className={`gv-interruption-draft mt-2 text-center text-[11px] font-semibold ${tripDraftStatus === 'FAILED' ? 'text-red-700' : 'text-slate-500'}`}>
+            {tripDraftStatus === 'SAVING' ? 'Saving draft…' : tripDraftStatus === 'SAVED' ? 'Draft saved locally' : tripDraftStatus === 'RESTORED' ? 'Unsaved draft restored' : 'Draft save failed — device storage may be full; keep this page open and free storage before retrying'}
+          </div>
+        )}
+
         {/* =================================================
             CURRENT OPEN FEEDERS
         ================================================== */}
 
         <div
+          className="gv-open-interruptions"
           style={{
             marginTop:
               18,
@@ -2386,18 +2651,27 @@ export function InterruptionEntryPage({
                   (
                     interruption
                   ) => (
-                    <button
+                    <div
+                      className="gv-open-interruption-card"
                       key={
                         interruption.id
                       }
-
-                      type="button"
 
                       onClick={() =>
                         openRestoreModal(
                           interruption
                         )
                       }
+
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openRestoreModal(interruption);
+                        }
+                      }}
+
+                      role="button"
+                      tabIndex={0}
 
                       style={{
                         width:
@@ -2562,25 +2836,31 @@ export function InterruptionEntryPage({
 
                           <span
                             className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold ${
-                              interruption.syncStatus === 'FAILED'
+                              interruption.syncStatus === 'NEEDS_ATTENTION'
                                 ? 'bg-red-50 text-red-700'
                                 : interruption.syncStatus === 'PENDING'
                                 ? 'bg-amber-50 text-amber-800'
+                                : interruption.syncStatus === 'CACHED'
+                                ? 'bg-slate-100 text-slate-600'
                                 : 'bg-emerald-50 text-emerald-700'
                             }`}
-                            title={interruption.syncStatus === 'FAILED' ? interruption.queuedOperation?.lastError ?? 'This change will be retried.' : undefined}
+                            title={interruption.syncStatus === 'NEEDS_ATTENTION' ? interruption.queuedOperation?.lastError ?? 'This change needs review.' : undefined}
                           >
-                            {interruption.syncStatus === 'FAILED' ? (
+                            {interruption.syncStatus === 'NEEDS_ATTENTION' ? (
                               <AlertTriangle className="h-3 w-3" />
                             ) : interruption.syncStatus === 'PENDING' ? (
                               <UploadCloud className="h-3 w-3" />
+                            ) : interruption.syncStatus === 'CACHED' ? (
+                              <CloudOff className="h-3 w-3" />
                             ) : (
                               <CheckCircle2 className="h-3 w-3" />
                             )}
-                            {interruption.syncStatus === 'FAILED'
-                              ? 'Sync Failed'
+                            {interruption.syncStatus === 'NEEDS_ATTENTION'
+                              ? 'Needs Attention'
                               : interruption.syncStatus === 'PENDING'
                               ? 'Pending Sync'
+                              : interruption.syncStatus === 'CACHED'
+                              ? 'Cached Server State'
                               : 'Synced'}
                           </span>
 
@@ -2609,6 +2889,15 @@ export function InterruptionEntryPage({
                               }
                             </p>
                           )}
+
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-600">
+                            <span>ETR: {interruption.etr ? formatDateTime(interruption.etr) : 'Not set'}</span>
+                            {etrExceededText(interruption.etr) && (
+                              <span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">
+                                {etrExceededText(interruption.etr)}
+                              </span>
+                            )}
+                          </div>
 
                           <div
                             style={{
@@ -2659,11 +2948,28 @@ export function InterruptionEntryPage({
                           </div>
                         </div>
                       </div>
-                    </button>
+                      <div className="gv-open-interruption-actions hidden lg:flex">
+                        <button
+                          type="button"
+                          onClick={(event) => { event.stopPropagation(); openRestoreModal(interruption); setEditingEtr(true); }}
+                          className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+                        >
+                          {interruption.etr ? 'Update ETR' : 'Set ETR'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => { event.stopPropagation(); openRestoreModal(interruption); }}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    </div>
                   )
                 )}
               </div>
             )}
+        </div>
         </div>
       </div>
 
@@ -2856,6 +3162,11 @@ export function InterruptionEntryPage({
                       tripTime
                     )
                   )}
+                />
+
+                <ModalRow
+                  label="ETR"
+                  value={etr ? formatDateTime(localInputToISO(etr)) : 'Not set'}
                 />
 
                 <ModalRow
@@ -3177,6 +3488,34 @@ export function InterruptionEntryPage({
                   }
                 />
               )}
+
+              <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Estimated Restoration Time (ETR)</p>
+                    <p className="mt-1 text-sm font-bold text-slate-800">{selectedInterruption.etr ? formatDateTime(selectedInterruption.etr) : 'Not set'}</p>
+                    {etrExceededText(selectedInterruption.etr) && <p className="mt-1 text-[11px] font-bold text-amber-700">{etrExceededText(selectedInterruption.etr)}</p>}
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {selectedInterruption.etr && (
+                      <button type="button" onClick={() => void saveEtr(null)} disabled={updatingEtr || restoring} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold text-red-700 disabled:opacity-50">
+                        Remove ETR
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setEditingEtr((current) => !current)} disabled={updatingEtr || restoring} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 disabled:opacity-50">
+                      {selectedInterruption.etr ? 'Update ETR' : 'Set ETR'}
+                    </button>
+                  </div>
+                </div>
+                {editingEtr && (
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <input type="datetime-local" aria-label="New estimated restoration time" value={etrTime} min={minimumEtrLocalDateTime(getInterruptionStart(selectedInterruption))} onChange={(event) => setEtrTime(event.target.value)} className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800" />
+                    <button type="button" onClick={() => void saveEtr()} disabled={updatingEtr || restoring} className="min-h-10 rounded-lg bg-blue-700 px-4 text-xs font-bold text-white disabled:opacity-50">
+                      {updatingEtr ? 'Saving…' : 'Save ETR'}
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <div
                 style={{

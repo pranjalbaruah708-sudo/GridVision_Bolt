@@ -28,11 +28,14 @@ import {
   getQueuedOp,
   getQueue,
   isOnline,
+  recordSuccessfulQueueSync,
   readCache,
   updateQueuedOp,
+  updateQueuedInterruptionAddEtr,
   writeCache,
   type QueuedOp,
   type EnqueueOpInput,
+  type SyncFailureCategory,
 } from './offline';
 
 import type {
@@ -51,6 +54,7 @@ import type {
   Station,
 } from '@/types';
 import type { AppRole } from '@/security/permissions';
+import { recordStorageFailure, recordSyncCompleted, recordSyncStarted } from './diagnostics';
 import { isQueueSyncAuthorized } from './syncAuthorization';
 export type { AppRole } from '@/security/permissions';
 
@@ -855,10 +859,7 @@ export const api = {
     if (
       error
     ) {
-      console.error(
-        'Failed to get current user role:',
-        error
-      );
+      console.error('The current application role could not be loaded.');
 
       throw error;
     }
@@ -929,10 +930,7 @@ async getLoadEnergyReadings(
     const { data, error } = await query;
 
     if (error) {
-      console.error(
-        "Failed to load Load/Energy analysis readings:",
-        error
-      );
+      console.error('Load and energy analysis readings could not be loaded.');
       throw error;
     }
 
@@ -1418,10 +1416,7 @@ async getLoadAnalysisDailyTrend(
     );
 
   if (error) {
-    console.error(
-      "Failed to load daily load-analysis trend:",
-      error
-    );
+    console.error('The daily load-analysis trend could not be loaded.');
 
     throw error;
   }
@@ -1866,10 +1861,7 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     if (
       error
     ) {
-      console.error(
-        'Failed to load station load trend:',
-        error
-      );
+      console.error('The station load trend could not be loaded.');
 
       throw error;
     }
@@ -1993,10 +1985,7 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     if (
       error
     ) {
-      console.error(
-        'Failed to load accessible stations:',
-        error
-      );
+      console.error('Accessible stations could not be loaded.');
 
       throw error;
     }
@@ -2548,6 +2537,28 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     );
   },
 
+  async updateInterruptionEtr(id: string, etr: string | null): Promise<void> {
+    const ownerUserId = await getQueueOwnerUserId();
+    if (id.startsWith('local:int:')) {
+      await updateQueuedInterruptionAddEtr(id, etr, ownerUserId);
+      return;
+    }
+
+    await restPatch<Interruption>(
+      'interruptions',
+      { id },
+      { etr },
+      'interruptions:all:all',
+      {
+        operationType: 'UPDATE_INTERRUPTION_ETR',
+        eventTime: new Date().toISOString(),
+        recordedAt: Date.now(),
+        entryMode: 'OFFLINE',
+        serverEntityId: id,
+      }
+    );
+  },
+
   /* =======================================================
      CANCEL INTERRUPTION
   ======================================================= */
@@ -3037,35 +3048,75 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
 ========================================================= */
 
 let activeFlush: Promise<{ ok: number; failed: number }> | null = null;
+let activeFlushOwnerUserId: string | null = null;
 
-export function flushQueue(): Promise<{ ok: number; failed: number }> {
-  if (!activeFlush) {
-    activeFlush = flushQueueInternal().finally(() => { activeFlush = null; });
+export async function flushQueue(): Promise<{ ok: number; failed: number }> {
+  const ownerUserId = await getQueueOwnerUserId();
+  if (activeFlush) {
+    if (activeFlushOwnerUserId === ownerUserId) return activeFlush;
+    await activeFlush;
+    return flushQueue();
   }
+  activeFlushOwnerUserId = ownerUserId;
+  activeFlush = flushQueueInternal(ownerUserId).finally(() => { activeFlush = null; activeFlushOwnerUserId = null; });
   return activeFlush;
 }
 
-async function flushQueueInternal():
+export async function retryQueuedOperation(operationId: string): Promise<{ ok: number; failed: number }> {
+  const ownerUserId = await getQueueOwnerUserId();
+  if (activeFlush) {
+    await activeFlush;
+    return retryQueuedOperation(operationId);
+  }
+  activeFlushOwnerUserId = ownerUserId;
+  activeFlush = flushQueueInternal(ownerUserId, operationId, true).finally(() => { activeFlush = null; activeFlushOwnerUserId = null; });
+  return activeFlush;
+}
+
+async function flushQueueInternal(ownerUserId: string, targetOperationId?: string, includeNeedsAttention = false):
   Promise<{
     ok: number;
     failed: number;
   }> {
-  const ownerUserId = await getQueueOwnerUserId();
   if (!isQueueSyncAuthorized(ownerUserId)) {
     throw new Error('GridVision access must be revalidated online before pending changes can sync.');
   }
   const queue = await getQueue(ownerUserId);
+  const allowedOperationIds = new Set<string>();
+  if (targetOperationId) {
+    const target = queue.find((op) => op.id === targetOperationId || op.clientOperationId === targetOperationId);
+    if (!target) return { ok: 0, failed: 0 };
+    const includeWithDependencies = (operation: QueuedOp) => {
+      if (allowedOperationIds.has(operation.id)) return;
+      operation.dependsOn?.forEach((dependencyId) => {
+        const dependency = queue.find((candidate) => candidate.id === dependencyId || candidate.clientOperationId === dependencyId);
+        if (dependency) includeWithDependencies(dependency);
+      });
+      allowedOperationIds.add(operation.id);
+    };
+    includeWithDependencies(target);
+  }
+  if (!(await queueSyncSessionIsCurrent(ownerUserId))) {
+    throw new Error('The signed-in user changed before synchronization could start.');
+  }
+  await recordSyncStarted(ownerUserId);
 
   let ok =
     0;
 
   let failed =
     0;
+  const failureCategories: SyncFailureCategory[] = [];
+  let sessionChanged = false;
+  const logBookOperationsWithLaterReading = queuedLogBookOperationsWithLaterReading(queue);
 
   for (
     const op of
     queue
   ) {
+    if (!(await queueSyncSessionIsCurrent(ownerUserId))) { sessionChanged = true; break; }
+    if (targetOperationId && !allowedOperationIds.has(op.id)) continue;
+    if (!includeNeedsAttention && op.syncState === 'NEEDS_ATTENTION') continue;
     const currentOp = await getQueuedOp(op.id, ownerUserId);
     if (!currentOp) continue;
 
@@ -3077,17 +3128,27 @@ async function flushQueueInternal():
       : undefined;
 
     if (historicalRestore) {
+      if (!includeNeedsAttention && historicalRestore.syncState === 'NEEDS_ATTENTION') continue;
       try {
-        await runHistoricalInterruptionPair(currentOp, historicalRestore);
-        await dequeueOps([currentOp.id, historicalRestore.id]);
+        await runHistoricalInterruptionPair(currentOp, historicalRestore, ownerUserId);
+        try { await dequeueOps([currentOp.id, historicalRestore.id]); }
+        catch (cause) { throw new QueuedLocalCompletionError(cause); }
         ok += 2;
       } catch (cause) {
+        if (cause instanceof QueuedSyncSessionChangedError) { sessionChanged = true; break; }
+        if (cause instanceof QueuedLocalCompletionError) {
+          failed += 2;
+          await recordStorageFailure(ownerUserId);
+          continue;
+        }
         failed += 2;
         for (const failedOp of [currentOp, historicalRestore]) {
           try {
+            const failure = queuedFailureMetadata(cause, failedOp);
+            if (failure.failureCategory) failureCategories.push(failure.failureCategory);
             await updateQueuedOp(failedOp.id, {
               retryCount: failedOp.retryCount + 1,
-              lastError: safeQueuedOperationError(cause),
+              ...failure,
             });
           } catch {
             /* Both operations remain queued if diagnostic persistence fails. */
@@ -3097,30 +3158,51 @@ async function flushQueueInternal():
       continue;
     }
 
-    if (currentOp.dependsOn && (await Promise.all(currentOp.dependsOn.map((dependency) => getQueuedOp(dependency, ownerUserId)))).some(Boolean)) continue;
+    if (currentOp.dependsOn && (await Promise.all(currentOp.dependsOn.map((dependency) => getQueuedOp(dependency, ownerUserId)))).some(Boolean)) {
+      if (currentOp.failureCategory !== 'DEPENDENCY') {
+        await updateQueuedOp(currentOp.id, {
+          failureCategory: 'DEPENDENCY',
+          syncState: 'PENDING',
+          lastError: 'Waiting for the related trip record to synchronize.',
+        });
+      }
+      continue;
+    }
 
     try {
       const replayResult = await runQueued(
-        currentOp
+        currentOp,
+        ownerUserId,
+        !logBookOperationsWithLaterReading.has(currentOp.id),
       );
 
       if (currentOp.operationType === 'ADD_INTERRUPTION') {
         if (!replayResult.serverEntityId) throw new Error('Interruption replay succeeded without a server record identifier.');
-        await completeQueuedInterruptionAdd(currentOp.id, replayResult.serverEntityId);
+        try { await completeQueuedInterruptionAdd(currentOp.id, replayResult.serverEntityId); }
+        catch (cause) { throw new QueuedLocalCompletionError(cause); }
       } else {
-        await dequeueOp(currentOp.id);
+        try { await dequeueOp(currentOp.id); }
+        catch (cause) { throw new QueuedLocalCompletionError(cause); }
       }
 
       ok +=
         1;
     } catch (cause) {
+      if (cause instanceof QueuedSyncSessionChangedError) { sessionChanged = true; break; }
+      if (cause instanceof QueuedLocalCompletionError) {
+        failed += 1;
+        await recordStorageFailure(ownerUserId);
+        continue;
+      }
       failed +=
         1;
 
       try {
+        const failure = queuedFailureMetadata(cause, currentOp);
+        if (failure.failureCategory) failureCategories.push(failure.failureCategory);
         await updateQueuedOp(currentOp.id, {
           retryCount: currentOp.retryCount + 1,
-          lastError: safeQueuedOperationError(cause),
+          ...failure,
         });
       } catch {
         /* The operation remains queued if diagnostic persistence fails. */
@@ -3128,10 +3210,16 @@ async function flushQueueInternal():
     }
   }
 
-  return {
-    ok,
-    failed,
-  };
+  if (ok > 0) {
+    try { await recordSuccessfulQueueSync(ownerUserId); } catch { /* Successful replay remains authoritative if status metadata cannot be written. */ }
+  }
+
+  const dominantFailureCategory = failureCategories.length
+    ? [...failureCategories].sort((left, right) => failureCategories.filter((item) => item === right).length - failureCategories.filter((item) => item === left).length)[0]
+    : null;
+  if (!sessionChanged) await recordSyncCompleted(ownerUserId, { ok, failed, dominantFailureCategory });
+
+  return { ok, failed };
 }
 
 async function getQueueOwnerUserId(): Promise<string> {
@@ -3140,6 +3228,12 @@ async function getQueueOwnerUserId(): Promise<string> {
   const userId = data.session?.user.id;
   if (!userId) throw new Error('An authenticated session is required to save offline operations.');
   return userId;
+}
+
+async function queueSyncSessionIsCurrent(ownerUserId: string): Promise<boolean> {
+  if (!isQueueSyncAuthorized(ownerUserId)) return false;
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user.id === ownerUserId;
 }
 
 function queuedBody(op: QueuedOp): Record<string, unknown> {
@@ -3155,10 +3249,11 @@ function requiredQueuedString(body: Record<string, unknown>, key: string): strin
   return value;
 }
 
-async function runHistoricalInterruptionPair(addOp: QueuedOp, restoreOp: QueuedOp): Promise<string> {
+async function runHistoricalInterruptionPair(addOp: QueuedOp, restoreOp: QueuedOp, ownerUserId: string): Promise<string> {
   const add = queuedBody(addOp);
   const restore = queuedBody(restoreOp);
   const headers = await getAuthHeaders();
+  if (!(await queueSyncSessionIsCurrent(ownerUserId))) throw new QueuedSyncSessionChangedError();
   const response = await fetch(`${REST_URL}/rpc/sync_historical_interruption`, {
     method: 'POST',
     headers,
@@ -3182,10 +3277,38 @@ async function runHistoricalInterruptionPair(addOp: QueuedOp, restoreOp: QueuedO
   return id;
 }
 
-function safeQueuedOperationError(cause: unknown): string {
-  if (!(cause instanceof Error)) return 'Replay failed. The operation will be retried.';
-  const status = cause.message.match(/HTTP\s+(\d{3})/i)?.[1];
-  return status ? `Replay failed with HTTP ${status}.` : 'Replay failed. The operation will be retried.';
+function queuedFailureMetadata(cause: unknown, operation: QueuedOp): Pick<QueuedOp, 'failureCategory' | 'syncState' | 'lastError' | 'lastAttemptAt'> & Partial<Pick<QueuedOp, 'lastHttpStatus' | 'lastDatabaseCode'>> {
+  const status = cause instanceof QueuedReplayError ? cause.status : undefined;
+  const databaseCode = cause instanceof QueuedReplayError ? cause.postgresCode ?? undefined : undefined;
+  let failureCategory: SyncFailureCategory = 'UNKNOWN';
+  if (cause instanceof QueuedDependencyError) failureCategory = 'DEPENDENCY';
+  else if (!(cause instanceof QueuedReplayError) && (!isOnline() || cause instanceof TypeError)) failureCategory = 'TRANSIENT';
+  else if (status === 401 || status === 403 || databaseCode === '42501') failureCategory = 'AUTHORIZATION';
+  else if (status === 409 || databaseCode === '23505' || databaseCode === '23P01') failureCategory = 'CONFLICT';
+  else if (status === 408 || status === 429 || (status !== undefined && status >= 500)) failureCategory = 'TRANSIENT';
+  else if (status === 400 || status === 422 || databaseCode?.startsWith('22') || ['23502', '23503', '23514'].includes(databaseCode ?? '')) failureCategory = 'VALIDATION';
+
+  const lastError = failureCategory === 'TRANSIENT'
+    ? 'GridVision could not reach the server. It will retry when connectivity is available.'
+    : failureCategory === 'AUTHORIZATION'
+      ? 'Your access changed before this record could synchronize. The record remains safely stored on this device.'
+      : failureCategory === 'CONFLICT' && operation.table === 'interruptions'
+        ? 'This feeder already has an open interruption on the server. Review the current interruption before retrying.'
+        : failureCategory === 'CONFLICT' && operation.table === 'log_book_entries'
+          ? 'A server record already exists for this feeder and hour. Review the latest record before deciding how to proceed.'
+          : failureCategory === 'VALIDATION'
+            ? 'The server rejected this record. Review the entry before retrying.'
+            : failureCategory === 'DEPENDENCY'
+              ? 'Waiting for the related trip record to synchronize.'
+              : 'The record could not synchronize. It remains safely stored for review.';
+  return {
+    failureCategory,
+    syncState: failureCategory === 'CONFLICT' || failureCategory === 'VALIDATION' || failureCategory === 'AUTHORIZATION' || failureCategory === 'UNKNOWN' ? 'NEEDS_ATTENTION' : 'PENDING',
+    lastError,
+    lastAttemptAt: Date.now(),
+    lastHttpStatus: status,
+    lastDatabaseCode: databaseCode?.slice(0, 20),
+  };
 }
 
 /* =========================================================
@@ -3194,10 +3317,12 @@ function safeQueuedOperationError(cause: unknown): string {
 
 async function runQueued(
   op:
-    QueuedOp
+    QueuedOp,
+  ownerUserId: string,
+  offlineSequenceFinal: boolean,
 ): Promise<{ serverEntityId?: string }> {
   if (op.operationType === 'RESTORE_INTERRUPTION' && !op.filter?.id) {
-    throw new Error('Pending interruption restore is waiting for its server record.');
+    throw new QueuedDependencyError();
   }
 
   const qs =
@@ -3226,9 +3351,10 @@ async function runQueued(
 
   const headers =
     await getAuthHeaders();
+  if (!(await queueSyncSessionIsCurrent(ownerUserId))) throw new QueuedSyncSessionChangedError();
 
   const replayBody =
-    await buildQueuedReplayBody(op);
+    buildQueuedReplayBody(op, offlineSequenceFinal);
 
   const res =
     await fetch(
@@ -3257,7 +3383,7 @@ async function runQueued(
     !res.ok
   ) {
     const replayError = await readQueuedReplayError(res);
-    const existingServerId = await confirmedClientOperationDuplicateId(op, replayError);
+    const existingServerId = await confirmedClientOperationDuplicateId(op, replayError, ownerUserId);
     if (existingServerId) return { serverEntityId: existingServerId };
     throw replayError;
   }
@@ -3284,16 +3410,40 @@ class QueuedReplayError extends Error {
   }
 }
 
-async function buildQueuedReplayBody(op: QueuedOp): Promise<unknown> {
+class QueuedDependencyError extends Error {
+  constructor() {
+    super('Pending interruption restore is waiting for its server record.');
+    this.name = 'QueuedDependencyError';
+  }
+}
+
+class QueuedSyncSessionChangedError extends Error {
+  constructor() {
+    super('The signed-in user changed while synchronization was running.');
+    this.name = 'QueuedSyncSessionChangedError';
+  }
+}
+
+class QueuedLocalCompletionError extends Error {
+  constructor(readonly cause: unknown) {
+    super('The server accepted the operation, but local completion could not be stored.');
+    this.name = 'QueuedLocalCompletionError';
+  }
+}
+
+function buildQueuedReplayBody(op: QueuedOp, offlineSequenceFinal: boolean): unknown {
   if (!IDEMPOTENT_OPERATION_TABLES.has(op.table) || (op.method !== 'POST' && op.method !== 'PATCH')) return op.body;
   if (!op.body || typeof op.body !== 'object' || Array.isArray(op.body)) return op.body;
+  // An ETR revision is naturally idempotent. Preserve the interruption's
+  // original create/restore provenance instead of replacing its operation IDs.
+  if (op.operationType === 'UPDATE_INTERRUPTION_ETR') return op.body;
 
   const operationIdentity = op.table === 'interruptions' && op.operationType === 'RESTORE_INTERRUPTION'
     ? { restore_client_operation_id: op.clientOperationId }
     : { client_operation_id: op.clientOperationId };
 
   const parameterSequence = op.table === 'log_book_entries'
-    ? { offline_sequence_final: !(await hasLaterQueuedLogBookReading(op)) }
+    ? { offline_sequence_final: offlineSequenceFinal }
     : {};
 
   return {
@@ -3306,26 +3456,23 @@ async function buildQueuedReplayBody(op: QueuedOp): Promise<unknown> {
   };
 }
 
-async function hasLaterQueuedLogBookReading(op: QueuedOp): Promise<boolean> {
-  if (!op.body || typeof op.body !== 'object' || Array.isArray(op.body)) return false;
-  const body = op.body as Record<string, unknown>;
-  const stationId = typeof body.station_id === 'string' ? body.station_id : null;
-  const feederId = typeof body.feeder_id === 'string' ? body.feeder_id : null;
-  const eventTime = typeof body.actual_event_time === 'string' ? body.actual_event_time : op.eventTime;
-  if (!stationId || !feederId || !eventTime) return false;
-  const eventMillis = Date.parse(eventTime);
-  if (!Number.isFinite(eventMillis)) return false;
-
-  return (await getQueue(op.ownerUserId)).some((candidate) => {
-    if (candidate.id === op.id || candidate.table !== 'log_book_entries') return false;
-    if (!candidate.body || typeof candidate.body !== 'object' || Array.isArray(candidate.body)) return false;
-    const queued = candidate.body as Record<string, unknown>;
-    const queuedTime = typeof queued.actual_event_time === 'string' ? queued.actual_event_time : candidate.eventTime;
-    return queued.station_id === stationId
-      && queued.feeder_id === feederId
-      && typeof queuedTime === 'string'
-      && Date.parse(queuedTime) > eventMillis;
+function queuedLogBookOperationsWithLaterReading(queue: QueuedOp[]): Set<string> {
+  const latestByFeeder = new Map<string, number>();
+  const rows: Array<{ id: string; feederKey: string; eventMillis: number }> = [];
+  queue.forEach((operation) => {
+    if (operation.table !== 'log_book_entries' || !operation.body || typeof operation.body !== 'object' || Array.isArray(operation.body)) return;
+    const body = operation.body as Record<string, unknown>;
+    const stationId = typeof body.station_id === 'string' ? body.station_id : null;
+    const feederId = typeof body.feeder_id === 'string' ? body.feeder_id : null;
+    const eventTime = typeof body.actual_event_time === 'string' ? body.actual_event_time : operation.eventTime;
+    if (!stationId || !feederId || !eventTime) return;
+    const eventMillis = Date.parse(eventTime);
+    if (!Number.isFinite(eventMillis)) return;
+    const feederKey = `${stationId}:${feederId}`;
+    latestByFeeder.set(feederKey, Math.max(latestByFeeder.get(feederKey) ?? Number.NEGATIVE_INFINITY, eventMillis));
+    rows.push({ id: operation.id, feederKey, eventMillis });
   });
+  return new Set(rows.filter((row) => row.eventMillis < (latestByFeeder.get(row.feederKey) ?? row.eventMillis)).map((row) => row.id));
 }
 
 async function readQueuedReplayError(response: Response): Promise<QueuedReplayError> {
@@ -3338,21 +3485,23 @@ async function readQueuedReplayError(response: Response): Promise<QueuedReplayEr
   return new QueuedReplayError(response.status, typeof body?.code === 'string' ? body.code : null);
 }
 
-async function confirmedClientOperationDuplicateId(op: QueuedOp, error: QueuedReplayError): Promise<string | null> {
+async function confirmedClientOperationDuplicateId(op: QueuedOp, error: QueuedReplayError, ownerUserId: string): Promise<string | null> {
   if (error.status !== 409 || error.postgresCode !== '23505') return null;
   if (!IDEMPOTENT_OPERATION_TABLES.has(op.table) || !op.clientOperationId) return null;
   const identityColumn = op.table === 'interruptions' && op.operationType === 'RESTORE_INTERRUPTION'
     ? 'restore_client_operation_id'
     : 'client_operation_id';
-  return findByClientOperationId(op.table as 'log_book_entries' | 'interruptions', identityColumn, op.clientOperationId);
+  return findByClientOperationId(op.table as 'log_book_entries' | 'interruptions', identityColumn, op.clientOperationId, ownerUserId);
 }
 
 async function findByClientOperationId(
   table: 'log_book_entries' | 'interruptions',
   identityColumn: 'client_operation_id' | 'restore_client_operation_id',
-  clientOperationId: string
+  clientOperationId: string,
+  ownerUserId: string,
 ): Promise<string | null> {
   const headers = await getAuthHeaders();
+  if (!(await queueSyncSessionIsCurrent(ownerUserId))) return null;
   const query = `${identityColumn}=eq.${encodeURIComponent(clientOperationId)}&select=id&limit=1`;
   const response = await fetch(`${REST_URL}/${table}?${query}`, { method: 'GET', headers });
   if (!response.ok) return null;

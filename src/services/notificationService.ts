@@ -105,10 +105,7 @@ export async function createNotification(
   } = await supabase.auth.getUser();
 
   if (userError) {
-    console.error(
-      '❌ Error getting authenticated user:',
-      userError
-    );
+    console.error('Notification creation could not verify the signed-in user.');
 
     throw userError;
   }
@@ -141,10 +138,7 @@ export async function createNotification(
     .single();
 
   if (eventError) {
-    console.error(
-      '❌ Error creating notification event:',
-      eventError
-    );
+    console.error('The notification event could not be created.');
 
     throw eventError;
   }
@@ -182,10 +176,7 @@ export async function createNotification(
   );
 
   if (recipientError) {
-    console.error(
-      '❌ Error resolving notification recipients:',
-      recipientError
-    );
+    console.error('Notification recipients could not be resolved.');
 
     throw recipientError;
   }
@@ -237,10 +228,7 @@ export async function createNotification(
     .select();
 
   if (insertError) {
-    console.error(
-      '❌ Error creating notification recipient records:',
-      insertError
-    );
+    console.error('Notification recipient records could not be created.');
 
     throw insertError;
   }

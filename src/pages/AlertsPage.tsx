@@ -14,6 +14,8 @@ import type { ParameterAlert } from "@/services/api";
 import { DesktopPageContainer } from "@/components/layout/DesktopPageContainer";
 import { useRealtimeRefresh } from "@/hooks/useRealtimeRefresh";
 import ScreenExportMenu from "@/components/ScreenExportMenu";
+import { supabase } from '@/services/supabase';
+import { cachedFreshness, formatCacheAge, readOperationalSnapshot, writeOperationalSnapshot } from '@/services/operationalReadCache';
 
 type AlertKind = "critical" | "warning" | "info";
 
@@ -22,8 +24,12 @@ type AlertItem = {
   kind: AlertKind;
   title: string;
   message: string;
+  stationId?: string;
   station: string;
+  feeder?: string;
   time: string;
+  duration?: string;
+  cause?: string;
   source: "Parameter alert" | "Interruption";
   status: "Active" | "Open" | "Restored" | "Historical";
   notificationClass?: NotificationClass;
@@ -79,6 +85,28 @@ function parameterAlertMessage(alert: ParameterAlert) {
   return `${parameter}: ${alert.actual_value} (${configuredLimit})`;
 }
 
+function openInterruptionEtr(etr: string | null): string {
+  if (!etr) return 'ETR: Not set';
+  const label = new Date(etr).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' });
+  const exceededMinutes = Math.floor((Date.now() - new Date(etr).getTime()) / 60_000);
+  if (!Number.isFinite(exceededMinutes) || exceededMinutes < 0) return `ETR: ${label}`;
+  return `ETR: ${label} · Exceeded by ${exceededMinutes < 60 ? `${exceededMinutes} min` : `${Math.floor(exceededMinutes / 60)}h${exceededMinutes % 60 ? ` ${exceededMinutes % 60}m` : ''}`}`;
+}
+
+function formatInterruptionDuration(interruption: Interruption): string {
+  const minutes = interruption.duration_minutes ?? (
+    (interruption.current_status === 'OPEN' || interruption.interruption_end)
+      ? Math.max(0, Math.floor(((interruption.interruption_end ? new Date(interruption.interruption_end).getTime() : Date.now()) - new Date(interruption.interruption_start).getTime()) / 60_000))
+      : null
+  );
+  if (minutes === null || !Number.isFinite(minutes)) return 'Duration unavailable';
+  const rounded = Math.round(minutes);
+  if (rounded < 60) return `${rounded} min`;
+  const hours = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  return `${hours}h${remainder ? ` ${remainder}m` : ''}`;
+}
+
 export function AlertsPage({
   onBack,
   initialFilter = "ALL",
@@ -88,7 +116,7 @@ export function AlertsPage({
   initialFilter?: AlertFilter;
   onFilterChange?: (filter: AlertFilter) => void;
 }) {
-  const { stations } = useApp();
+  const { stations, feeders, online, pending } = useApp();
 
   const [items, setItems] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,14 +129,26 @@ export function AlertsPage({
   const [dateError, setDateError] = useState<string | null>(null);
   const loadGeneration = useRef(0);
   const reportRef = useRef<HTMLDivElement>(null);
+  const [cacheUserId, setCacheUserId] = useState<string | null>(null);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
+  useEffect(() => { let active = true; void supabase.auth.getSession().then(({ data }) => { if (active) setCacheUserId(data.session?.user.id ?? null); }); return () => { active = false; }; }, []);
 
   const load = useCallback(async (background = false) => {
+    if (!cacheUserId) return;
     const generation = ++loadGeneration.current;
     if (!background) setLoading(true);
     setError(null);
 
     try {
       const { startIso, endIso } = rangeToIso(dateRange);
+      const cacheKey = `alerts|ALL|${dateRange.startDate}|${dateRange.endDate}`;
+      if (!online) {
+        const snapshot = readOperationalSnapshot<AlertItem[]>(cacheUserId, cacheKey);
+        if (generation !== loadGeneration.current) return;
+        if (snapshot) { setItems(snapshot.value); setCachedAt(snapshot.cachedAt); setError(null); }
+        else { setItems([]); setCachedAt(null); setError('No cached alerts are available for this period. Connect once to load alerts.'); }
+        return;
+      }
       const [parameterAlerts, rangeInterruptions, openInterruptions] = await Promise.all([
         api.getParameterAlerts(undefined, startIso, endIso),
         api.getInterruptions(undefined, undefined, startIso, endIso),
@@ -117,6 +157,8 @@ export function AlertsPage({
       const interruptionMap = new Map(rangeInterruptions.map((item) => [item.id, item]));
       openInterruptions.forEach((item) => interruptionMap.set(item.id, item));
       const ints = Array.from(interruptionMap.values());
+      const stationNames = new Map(stations.map((station) => [station.id, station.name]));
+      const feederDetails = new Map(feeders.map((feeder) => [feeder.id, feeder]));
 
       const built: AlertItem[] = [
         ...parameterAlerts.map((a) => ({
@@ -126,16 +168,17 @@ export function AlertsPage({
           // warnings rather than inventing a criticality rule in the client.
           kind: "warning" as AlertKind,
 
-          title: a.feeder_name ? `Parameter exception: ${a.feeder_name}` : 'Parameter exception',
+          title: `Parameter exception: ${a.feeder_name ?? feederDetails.get(a.feeder_id)?.name ?? 'Feeder'}`,
 
           message: a.is_current
             ? parameterAlertMessage(a)
             : `${parameterAlertMessage(a)} · Superseded by a later reading; not a current alarm.`,
 
-          station:
-            stations.find(
-              (s) => s.id === a.station_id
-            )?.name ?? "—",
+          stationId: a.station_id,
+          station: stationNames.get(a.station_id)
+            ?? stationNames.get(feederDetails.get(a.feeder_id)?.station_id ?? '')
+            ?? 'Station details unavailable',
+          feeder: a.feeder_name ?? feederDetails.get(a.feeder_id)?.name ?? 'Feeder details unavailable',
 
           time: a.triggered_at,
           source: "Parameter alert" as const,
@@ -143,40 +186,35 @@ export function AlertsPage({
           notificationClass: a.notification_class ?? 'LIVE',
         })),
 
-        ...ints.map((i: Interruption) => ({
-          id: `i-${i.id}`,
-
-          kind: (
-            i.current_status === "OPEN"
-              ? "critical"
-              : "info"
-          ) as AlertKind,
-
-         title: i.cause ?? "Interruption",
-
-          message:
-            i.current_status === "OPEN"
-              ? `Supply interrupted — restoration in progress${new Date(i.interruption_start) < new Date(startIso) ? ' · Open from before selected range' : ''}`
-              : `Restored after ${
-                 i.duration_minutes !== null
-  ? `${Math.round(i.duration_minutes)} min`
-  : "—"
-                }h`,
-
-          station:
-            stations.find(
-              (s) => s.id === i.station_id
-            )?.name ?? "—",
-
-        time: i.interruption_start,
-        source: "Interruption" as const,
-        status: i.current_status === "OPEN" ? "Open" as const : "Restored" as const,
-        notificationClass: i.entry_mode === 'OFFLINE'
-          ? (i.current_status === 'RESTORED' && i.client_operation_id && i.restore_client_operation_id
-              ? 'HISTORICAL_SYNC' as const
-              : 'DELAYED_SYNC' as const)
-          : 'LIVE' as const,
-        })),
+        ...ints.map((i: Interruption) => {
+          const feeder = i.feeder_id
+            ? feederDetails.get(i.feeder_id)?.name ?? 'Feeder details unavailable'
+            : 'Station-level interruption';
+          const station = stationNames.get(i.station_id)
+            ?? stationNames.get(i.feeder_id ? feederDetails.get(i.feeder_id)?.station_id ?? '' : '')
+            ?? 'Station details unavailable';
+          return {
+            id: `i-${i.id}`,
+            kind: (i.current_status === "OPEN" ? "critical" : "info") as AlertKind,
+            title: feeder,
+            message: i.current_status === "OPEN"
+              ? `Supply interrupted — restoration in progress${new Date(i.interruption_start) < new Date(startIso) ? ' · Open from before selected range' : ''} · ${openInterruptionEtr(i.etr)}`
+              : 'Supply restored',
+            stationId: i.station_id,
+            station,
+            feeder,
+            time: i.interruption_start,
+            duration: formatInterruptionDuration(i),
+            cause: i.cause?.trim() || 'Cause not specified',
+            source: "Interruption" as const,
+            status: i.current_status === "OPEN" ? "Open" as const : "Restored" as const,
+            notificationClass: i.entry_mode === 'OFFLINE'
+              ? (i.current_status === 'RESTORED' && i.client_operation_id && i.restore_client_operation_id
+                  ? 'HISTORICAL_SYNC' as const
+                  : 'DELAYED_SYNC' as const)
+              : 'LIVE' as const,
+          };
+        }),
       ];
 
       built.sort(
@@ -187,6 +225,8 @@ export function AlertsPage({
 
       if (generation !== loadGeneration.current) return;
       setItems(built);
+      const snapshot = writeOperationalSnapshot(cacheUserId, cacheKey, built.slice(0, 500));
+      setCachedAt(snapshot.cachedAt);
     } catch (e) {
       if (generation !== loadGeneration.current) return;
       if (!background) {
@@ -199,7 +239,7 @@ export function AlertsPage({
     } finally {
       if (generation === loadGeneration.current) setLoading(false);
     }
-  }, [dateRange, stations]);
+  }, [cacheUserId, dateRange, feeders, online, stations]);
 
   useEffect(() => {
     void load();
@@ -212,6 +252,8 @@ export function AlertsPage({
 
   const filtered = useMemo(() => filter === "ALL" ? items : items.filter((item) => item.kind === filter.toLowerCase()), [filter, items]);
   const rangeLabel = useMemo(() => formatRange(dateRange), [dateRange]);
+  const freshness = online && !loading && !error ? 'LIVE' : cachedFreshness(cachedAt);
+  const freshnessLabel = online && !loading && !error ? 'Live data' : cachedAt ? `${online ? '' : 'Offline · '}Cached · Updated ${formatCacheAge(cachedAt)}` : 'Offline · No cached data';
   const applyDateRange = () => {
     setDateError(null);
     if (!draftRange.startDate || !draftRange.endDate || draftRange.startDate > draftRange.endDate) {
@@ -232,7 +274,9 @@ export function AlertsPage({
       active: active.length,
       critical: active.filter((item) => item.kind === "critical").length,
       warnings: active.filter((item) => item.kind === "warning").length,
-      affectedStations: new Set(active.map((item) => item.station).filter((station) => station !== "—")).size,
+      affectedStations: new Set(active.map((item) => item.stationId
+        ?? (item.station !== "—" && item.station !== 'Station details unavailable' ? item.station : null))
+        .filter((station): station is string => Boolean(station))).size,
       restored: filtered.filter((item) => item.status === "Restored").length,
     };
   }, [filtered]);
@@ -469,6 +513,8 @@ export function AlertsPage({
           <span data-pdf-filter-label="Date range" data-pdf-filter-value={rangeLabel}>Period: {rangeLabel}</span>
           <span data-pdf-filter-label="Severity" data-pdf-filter-value={filter}>Severity: {filter === 'ALL' ? 'All alerts' : filter}</span>
         </div>
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-500"><span className={`h-2 w-2 rounded-full ${freshness === 'LIVE' ? 'bg-emerald-500' : freshness === 'RECENT_CACHE' ? 'bg-amber-500' : 'bg-red-500'}`} />{freshnessLabel}</div>
+        {!online && pending > 0 ? <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800">Local pending entries have not yet been evaluated by the server and are not included in these alerts.</p> : null}
         <div className="gv-alerts-layout">
         <div>
         {/* =================================================
@@ -497,7 +543,7 @@ export function AlertsPage({
             ERROR
         ================================================== */}
 
-        {!loading && error && (
+        {!loading && error && items.length === 0 && (
           <div
             style={{
               background: "#ffffff",
@@ -550,7 +596,7 @@ export function AlertsPage({
         ================================================== */}
 
         {!loading &&
-          !error &&
+          (!error || items.length > 0) &&
           filtered.length === 0 && (
             <div
               style={{
@@ -608,7 +654,7 @@ export function AlertsPage({
         ================================================== */}
 
         {!loading &&
-          !error &&
+          (!error || items.length > 0) &&
           filtered.length > 0 && (
             <div
               className="gv-alert-list"
@@ -716,6 +762,16 @@ export function AlertsPage({
                           </span>
                         </div>
 
+                        {a.source === 'Interruption' && (
+                          <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2.5">
+                            <p className="m-0 text-xs font-extrabold text-blue-950">{a.station}</p>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-bold text-blue-800">
+                              <span>{new Date(a.time).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>
+                              <span>{a.status === 'Open' ? 'Open for' : 'Duration'}: {a.duration}</span>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Message */}
 
                         <p
@@ -729,6 +785,10 @@ export function AlertsPage({
                         >
                           {a.message}
                         </p>
+
+                        {a.source === 'Interruption' && (
+                          <p className="mt-1.5 text-xs font-medium text-slate-500">Cause: {a.cause}</p>
+                        )}
 
                         <p className="gv-alerts-desktop-detail" style={{ margin: "7px 0 0", color: "#475569", fontSize: 11, fontWeight: 700 }}>
                           {a.source} · {a.status}
@@ -745,7 +805,7 @@ export function AlertsPage({
 
                         {/* Station + time */}
 
-                        <div
+                        {a.source === 'Parameter alert' && <div
                           className="gv-alert-meta"
                           style={{
                             marginTop: 12,
@@ -767,7 +827,7 @@ export function AlertsPage({
                               fontWeight: 600,
                             }}
                           >
-                            {a.station}
+                            {a.station}{a.feeder ? ` · ${a.feeder}` : ''}
                           </span>
 
                           <span>
@@ -775,7 +835,7 @@ export function AlertsPage({
                               a.time
                             ).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
                           </span>
-                        </div>
+                        </div>}
                       </div>
                     </div>
                   </div>

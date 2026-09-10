@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -32,6 +33,14 @@ import {
   OFFLINE_QUEUE_CHANGED_EVENT,
   type QueuedOp,
 } from "@/services/offline";
+import {
+  beginParameterDraftSession,
+  deleteParameterEntryDraft,
+  readParameterEntryDraft,
+  writeParameterEntryDraft,
+} from "@/services/operationalDrafts";
+import { formatCacheAge, readOperationalSnapshot, writeOperationalSnapshot } from '@/services/operationalReadCache';
+import { APP_BACKGROUND_EVENT } from '@/services/platform/runtime';
 
 /* =========================================================
    PARAMETERS
@@ -349,8 +358,12 @@ function valuesFromEntry(entry: Record<string, unknown>): Record<string, string>
 
 export function OperatorEntryPage({
   onBack,
+  initialReviewOperation,
+  onReviewConsumed,
 }: {
   onBack: () => void;
+  initialReviewOperation?: import('@/services/offline').QueuedOp | null;
+  onReviewConsumed?: () => void;
 }) {
   const {
     activeStationId,
@@ -403,6 +416,23 @@ export function OperatorEntryPage({
     feederId,
     setFeederId,
   ] = useState("");
+  const [completionSnapshotCachedAt, setCompletionSnapshotCachedAt] = useState<string | null>(null);
+  const [entrySnapshotCachedAt, setEntrySnapshotCachedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!initialReviewOperation) return;
+    const body = initialReviewOperation.body && typeof initialReviewOperation.body === 'object' && !Array.isArray(initialReviewOperation.body)
+      ? initialReviewOperation.body as Record<string, unknown> : {};
+    const reviewedFeederId = typeof body.feeder_id === 'string' ? body.feeder_id : null;
+    const reviewedTime = typeof body.actual_event_time === 'string' ? body.actual_event_time : initialReviewOperation.eventTime;
+    const parsed = reviewedTime ? new Date(reviewedTime) : null;
+    if (reviewedFeederId) setFeederId(reviewedFeederId);
+    if (parsed && !Number.isNaN(parsed.getTime())) {
+      setSelectedDate(toLocalDateString(parsed));
+      setSelectedHour(parsed.getHours());
+    }
+    onReviewConsumed?.();
+  }, [initialReviewOperation, onReviewConsumed]);
 
   /* =======================================================
      PARAMETER VALUES
@@ -460,6 +490,13 @@ export function OperatorEntryPage({
   const [queuedEntry, setQueuedEntry] = useState<QueuedOp | null>(null);
   const [loadedSlotKey, setLoadedSlotKey] = useState<string | null>(null);
   const [queueRevision, setQueueRevision] = useState(0);
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<"SAVING" | "SAVED" | "RESTORED" | "FAILED" | null>(null);
+  const valuesRef = useRef(values);
+  const dirtyRef = useRef(false);
+  const draftContextRef = useRef<{ userId: string; stationId: string; feederId: string; actualEventTime: string } | null>(null);
+  const draftWriteEpochRef = useRef<number | null>(null);
+  const requestedSlotRef = useRef<string | null>(null);
 
   const [
     error,
@@ -633,17 +670,100 @@ export function OperatorEntryPage({
     value: string
   ) => {
     setValues(
-      (previous) => ({
+      (previous) => {
+        const next = {
         ...previous,
         [key]:
           value,
-      })
+        };
+        valuesRef.current = next;
+        return next;
+      }
     );
+
+    dirtyRef.current = true;
+    setDraftDirty(true);
+    setDraftStatus("SAVING");
 
     setSaved(
       false
     );
   };
+
+  const draftContext = useMemo(() => operatorId && activeStationId && feederId && selectedDate
+    ? { userId: operatorId, stationId: activeStationId, feederId, actualEventTime: createActualEventTime(selectedDate, selectedHour) }
+    : null, [operatorId, activeStationId, feederId, selectedDate, selectedHour]);
+  const draftSlotKey = draftContext
+    ? `${draftContext.userId}:${draftContext.stationId}:${draftContext.feederId}:${draftContext.actualEventTime}`
+    : null;
+
+  const applyLoadedValues = useCallback(async (
+    context: NonNullable<typeof draftContext>,
+    slotKey: string,
+    baseValues: Record<string, string>
+  ) => {
+    const draft = await readParameterEntryDraft(context);
+    if (requestedSlotRef.current !== slotKey) return;
+    const next = draft?.values ?? baseValues;
+    valuesRef.current = next;
+    setValues(next);
+    dirtyRef.current = Boolean(draft);
+    setDraftDirty(Boolean(draft));
+    setDraftStatus(draft ? "RESTORED" : null);
+  }, []);
+
+  useEffect(() => {
+    const previousContext = draftContextRef.current;
+    if (previousContext && dirtyRef.current) {
+      const snapshot = { ...valuesRef.current };
+      void writeParameterEntryDraft({ ...previousContext, values: snapshot }, draftWriteEpochRef.current ?? undefined).catch(() => undefined);
+    }
+    draftContextRef.current = draftContext;
+    draftWriteEpochRef.current = draftContext ? beginParameterDraftSession(draftContext) : null;
+    dirtyRef.current = false;
+    setDraftDirty(false);
+    setDraftStatus(null);
+  }, [draftContext, draftSlotKey]);
+
+  useEffect(() => {
+    if (!draftDirty || !draftContext || !draftSlotKey || loadedSlotKey !== `${draftContext.stationId}:${draftContext.feederId}:${draftContext.actualEventTime}`) return;
+    const snapshot = { ...values };
+    setDraftStatus("SAVING");
+    const timer = window.setTimeout(() => {
+      if (!dirtyRef.current) return;
+      const writeEpoch = draftWriteEpochRef.current ?? undefined;
+      void writeParameterEntryDraft({ ...draftContext, values: snapshot }, writeEpoch)
+        .then(() => {
+          if (draftContextRef.current?.actualEventTime === draftContext.actualEventTime
+            && draftContextRef.current.feederId === draftContext.feederId
+            && dirtyRef.current) setDraftStatus("SAVED");
+        })
+        .catch(() => {
+          if (draftContextRef.current?.actualEventTime === draftContext.actualEventTime
+            && draftContextRef.current.feederId === draftContext.feederId) setDraftStatus("FAILED");
+        });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [draftContext, draftDirty, draftSlotKey, loadedSlotKey, values]);
+
+  useEffect(() => {
+    const persistLatest = () => {
+      const context = draftContextRef.current;
+      if (context && dirtyRef.current) {
+        void writeParameterEntryDraft({ ...context, values: { ...valuesRef.current } }, draftWriteEpochRef.current ?? undefined).catch(() => undefined);
+      }
+    };
+    const onVisibilityChange = () => { if (document.visibilityState === "hidden") persistLatest(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", persistLatest);
+    window.addEventListener(APP_BACKGROUND_EVENT, persistLatest);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", persistLatest);
+      window.removeEventListener(APP_BACKGROUND_EVENT, persistLatest);
+      persistLatest();
+    };
+  }, []);
 
   /* =======================================================
      LOAD EXISTING FEEDER ENTRY
@@ -657,8 +777,10 @@ export function OperatorEntryPage({
         if (
           !activeStationId ||
           !feederId ||
-          !selectedDate
+          !selectedDate ||
+          !draftContext
         ) {
+          requestedSlotRef.current = null;
           setExistingEntryId(
             null
           );
@@ -666,6 +788,10 @@ export function OperatorEntryPage({
           setValues(
             emptyValues()
           );
+          valuesRef.current = emptyValues();
+          dirtyRef.current = false;
+          setDraftDirty(false);
+          setDraftStatus(null);
 
           setQueuedEntry(null);
           setLoadedSlotKey(null);
@@ -675,25 +801,29 @@ export function OperatorEntryPage({
 
         const actualEventTime = createActualEventTime(selectedDate, selectedHour);
         const slotKey = `${activeStationId}:${feederId}:${actualEventTime}`;
+        requestedSlotRef.current = slotKey;
+        if (loadedSlotKey === slotKey && dirtyRef.current) return;
         const queued = operatorId
           ? (await getQueuedLogBookOp(activeStationId, feederId, actualEventTime, operatorId)) ?? null
           : null;
+        if (requestedSlotRef.current !== slotKey) return;
         setQueuedEntry(queued);
 
         if (queued?.body && typeof queued.body === "object" && !Array.isArray(queued.body)) {
           setExistingEntryId(queued.method === "PATCH" ? queued.filter?.id ?? null : null);
-          setValues(valuesFromEntry(queued.body as Record<string, unknown>));
+          await applyLoadedValues(draftContext, slotKey, valuesFromEntry(queued.body as Record<string, unknown>));
           setLoadedSlotKey(slotKey);
           setLoadingEntry(false);
           return;
         }
 
-        if (!online) {
-          if (loadedSlotKey !== slotKey) {
-            setExistingEntryId(null);
-            setValues(emptyValues());
-            setLoadedSlotKey(slotKey);
-          }
+        if (!hasNetworkConnection()) {
+          const snapshot = operatorId ? readOperationalSnapshot<ExistingLogEntry | null>(operatorId, `operator-entry|${slotKey}`) : null;
+          const entry = snapshot?.value ?? null;
+          setEntrySnapshotCachedAt(snapshot?.cachedAt ?? null);
+          setExistingEntryId(entry?.id ?? null);
+          await applyLoadedValues(draftContext, slotKey, entry ? valuesFromEntry(entry as unknown as Record<string, unknown>) : emptyValues());
+          setLoadedSlotKey(slotKey);
           setLoadingEntry(false);
           return;
         }
@@ -718,6 +848,11 @@ export function OperatorEntryPage({
             )) as
               ExistingLogEntry
               | null;
+          if (requestedSlotRef.current !== slotKey) return;
+          if (operatorId) {
+            const snapshot = writeOperationalSnapshot(operatorId, `operator-entry|${slotKey}`, entry);
+            setEntrySnapshotCachedAt(snapshot.cachedAt);
+          }
 
           /* -----------------------------------------------
              No existing entry
@@ -728,9 +863,7 @@ export function OperatorEntryPage({
               null
             );
 
-            setValues(
-              emptyValues()
-            );
+            await applyLoadedValues(draftContext, slotKey, emptyValues());
 
             setLoadedSlotKey(slotKey);
 
@@ -744,21 +877,17 @@ export function OperatorEntryPage({
           setExistingEntryId(
             entry.id
           );
-          setValues(valuesFromEntry(entry as unknown as Record<string, unknown>));
+          await applyLoadedValues(draftContext, slotKey, valuesFromEntry(entry as unknown as Record<string, unknown>));
           setLoadedSlotKey(slotKey);
         } catch (e) {
-          console.error(
-            "Failed to load existing log-book entry:",
-            e
-          );
+          if (requestedSlotRef.current !== slotKey) return;
+          console.error("The selected log-book entry could not be loaded.");
 
           setExistingEntryId(
             null
           );
 
-          setValues(
-            emptyValues()
-          );
+          if (!dirtyRef.current) await applyLoadedValues(draftContext, slotKey, emptyValues());
 
           setError(
             e instanceof Error
@@ -766,9 +895,7 @@ export function OperatorEntryPage({
               : "Failed to load existing entry."
           );
         } finally {
-          setLoadingEntry(
-            false
-          );
+          if (requestedSlotRef.current === slotKey) setLoadingEntry(false);
         }
       },
       [
@@ -776,9 +903,10 @@ export function OperatorEntryPage({
         feederId,
         selectedDate,
         selectedHour,
-        online,
         loadedSlotKey,
         operatorId,
+        draftContext,
+        applyLoadedValues,
       ]
     );
 
@@ -814,6 +942,20 @@ export function OperatorEntryPage({
           null
         );
 
+        if (!hasNetworkConnection()) {
+          const snapshot = operatorId ? readOperationalSnapshot<DayStatus[]>(operatorId, `operator-month-status|${activeStationId}|${calendarYear}-${calendarMonth + 1}`) : null;
+          if (snapshot) {
+            const cachedStatuses: Record<string, DayStatus> = {};
+            snapshot.value.forEach((row) => { cachedStatuses[row.date] = row; });
+            setMonthStatuses(cachedStatuses);
+            setCompletionSnapshotCachedAt(snapshot.cachedAt);
+          } else {
+            setError('Completion status is not cached for this month. Connect once to load it.');
+          }
+          setCalendarLoading(false);
+          return;
+        }
+
         try {
           const rows =
             (await api.getOperatorMonthEntryStatus(
@@ -841,11 +983,12 @@ export function OperatorEntryPage({
           setMonthStatuses(
             statusMap
           );
+          if (operatorId) {
+            const snapshot = writeOperationalSnapshot(operatorId, `operator-month-status|${activeStationId}|${calendarYear}-${calendarMonth + 1}`, rows);
+            setCompletionSnapshotCachedAt(snapshot.cachedAt);
+          }
         } catch (e) {
-          console.error(
-            "Failed to load monthly status:",
-            e
-          );
+          console.error("Monthly entry status could not be loaded.");
 
           setError(
             e instanceof Error
@@ -862,6 +1005,7 @@ export function OperatorEntryPage({
         activeStationId,
         calendarYear,
         calendarMonth,
+        operatorId,
       ]
     );
 
@@ -938,6 +1082,22 @@ export function OperatorEntryPage({
       null
     );
 
+    const completionCacheKey = `operator-day-status|${activeStationId}|${date}`;
+    if (!hasNetworkConnection()) {
+      const snapshot = operatorId ? readOperationalSnapshot<HourStatus[]>(operatorId, completionCacheKey) : null;
+      if (!snapshot) {
+        setError('Completion status is not cached for this date. Connect once to load it.');
+        setCalendarLoading(false);
+        return;
+      }
+      setHourStatuses(snapshot.value);
+      setCompletionSnapshotCachedAt(snapshot.cachedAt);
+      setCalendarOpen(false);
+      setHourModalOpen(true);
+      setCalendarLoading(false);
+      return;
+    }
+
     try {
       const rows =
         (await api.getOperatorDayHourStatus(
@@ -979,6 +1139,10 @@ const completed: HourStatus[] =
       setHourStatuses(
         completed
       );
+      if (operatorId) {
+        const snapshot = writeOperationalSnapshot(operatorId, completionCacheKey, completed);
+        setCompletionSnapshotCachedAt(snapshot.cachedAt);
+      }
 
       setCalendarOpen(
         false
@@ -988,10 +1152,7 @@ const completed: HourStatus[] =
         true
       );
     } catch (e) {
-      console.error(
-        "Failed to load hourly status:",
-        e
-      );
+      console.error("Hourly entry status could not be loaded.");
 
       setError(
         e instanceof Error
@@ -1174,6 +1335,18 @@ async function save() {
       }
     }
 
+    dirtyRef.current = false;
+    setDraftDirty(false);
+    if (draftContext) {
+      try {
+        await deleteParameterEntryDraft(draftContext);
+        setDraftStatus(null);
+      } catch {
+        setDraftStatus("FAILED");
+      }
+      draftWriteEpochRef.current = beginParameterDraftSession(draftContext);
+    }
+
     setSaved(true);
     setLastSaveStatus(savingOffline ? "PENDING" : "SYNCED");
 
@@ -1266,10 +1439,7 @@ const selectedHourStatus =
       2000
     );
   } catch (e) {
-    console.error(
-      "Failed to save operator entry:",
-      e
-    );
+    console.error("The operator entry could not be saved.");
 
     setError(
       e instanceof Error
@@ -1355,8 +1525,8 @@ const selectedHourStatus =
   ======================================================= */
 
   const activeEntrySyncStatus = queuedEntry
-    ? queuedEntry.retryCount > 0
-      ? "FAILED"
+    ? queuedEntry.syncState === "NEEDS_ATTENTION"
+      ? "NEEDS_ATTENTION"
       : "PENDING"
     : existingEntryId
     ? "SYNCED"
@@ -1364,6 +1534,7 @@ const selectedHourStatus =
 
   return (
     <div
+      className="gv-operator-entry-page"
       style={{
         minHeight:
           "100vh",
@@ -1383,7 +1554,7 @@ const selectedHourStatus =
       ================================================== */}
 
       <div
-        className="lg:!rounded-none lg:!border-b lg:!border-slate-200 lg:!bg-white lg:!text-slate-900 lg:!shadow-none"
+        className="gv-operator-entry-header lg:!rounded-none lg:!border-b lg:!border-slate-200 lg:!bg-white lg:!text-slate-900 lg:!shadow-none"
         style={{
           background:
             "linear-gradient(135deg,#0D47A1,#1565C0)",
@@ -1411,6 +1582,7 @@ const selectedHourStatus =
         }}
       >
         <div
+          className="gv-entry-heading-row"
           style={{
             display:
               "flex",
@@ -1435,6 +1607,7 @@ const selectedHourStatus =
             />
           </button>
 
+          <div className="gv-entry-heading-copy">
           <h2
             style={{
               margin:
@@ -1447,10 +1620,20 @@ const selectedHourStatus =
                 700,
             }}
           >
-            Operator Entry
+            <span className="lg:hidden">Operator Entry</span><span className="hidden lg:inline">Parameter Entry</span>
           </h2>
 
+          <p className="hidden lg:block lg:mt-1 lg:text-sm lg:font-medium lg:text-slate-600">Record hourly operational readings</p>
+          <p className="hidden lg:block lg:mt-0.5 lg:text-xs lg:font-semibold lg:text-slate-500">{activeStation?.name ?? "Station not assigned"}</p>
+          </div>
+
+          <div className="hidden items-center gap-5 text-xs font-bold text-slate-700 lg:flex" role="status" aria-live="polite">
+            <span className="inline-flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-500'}`} />{online ? 'Online' : 'Offline'}</span>
+            <span className="inline-flex items-center gap-2">{pending > 0 ? <UploadCloud className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}{pending > 0 ? `${pending} pending` : 'All changes synced'}</span>
+          </div>
+
           <CalendarDays
+            className="lg:hidden"
             size={24}
           />
         </div>
@@ -1458,7 +1641,7 @@ const selectedHourStatus =
         {/* Station */}
 
         <div
-          className="lg:!border-slate-200 lg:!bg-slate-50"
+          className="lg:hidden lg:!border-slate-200 lg:!bg-slate-50"
           style={{
             marginTop:
               18,
@@ -1522,7 +1705,7 @@ const selectedHourStatus =
       ================================================== */}
 
       <div
-        className="lg:mx-auto lg:w-full lg:max-w-5xl lg:px-8"
+        className="lg:mx-auto lg:w-full lg:max-w-6xl lg:px-8"
         style={{
           flex:
             1,
@@ -1540,7 +1723,7 @@ const selectedHourStatus =
         <div
           role="status"
           aria-live="polite"
-          className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold lg:ml-auto lg:max-w-xl ${
+          className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold lg:ml-auto lg:max-w-xl ${online && pending === 0 ? 'lg:hidden ' : ''}${
             online
               ? pending > 0
                 ? "border-blue-200 bg-blue-50 text-blue-800"
@@ -1563,6 +1746,8 @@ const selectedHourStatus =
               : "Offline · Entries will be saved on this device and synced automatically when connectivity returns."}
           </span>
         </div>
+
+        {!online && (entrySnapshotCachedAt || completionSnapshotCachedAt) ? <p className="mb-3 text-[11px] font-medium text-slate-500">Server entry/completion context is cached · Updated {formatCacheAge(entrySnapshotCachedAt ?? completionSnapshotCachedAt!)}. Unsaved drafts and local pending entries take precedence.</p> : null}
 
         {stationScopeError && (
           <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-900">
@@ -1670,6 +1855,7 @@ const selectedHourStatus =
         ================================================== */}
 
         <div
+          className="gv-parameter-selector-card"
           style={{
             background:
               "#ffffff",
@@ -1688,6 +1874,7 @@ const selectedHourStatus =
           }}
         >
           <div
+            className="gv-parameter-selector-heading"
             style={{
               display:
                 "flex",
@@ -1775,6 +1962,7 @@ const selectedHourStatus =
           ================================================== */}
 
           <label
+            className="gv-parameter-feeder-selector"
             style={{
               display:
                 "block",
@@ -1904,6 +2092,7 @@ const selectedHourStatus =
           </FieldLabel>
 
           <div
+            className="gv-parameter-slot-selector"
             style={{
               display:
                 "grid",
@@ -2139,6 +2328,7 @@ const selectedHourStatus =
                   21
                 }
               />
+              <span className="hidden lg:inline">View Completion Status</span>
             </button>
           </div>
 
@@ -2147,6 +2337,7 @@ const selectedHourStatus =
           ================================================== */}
 
           <div
+            className="gv-parameter-slot-state"
             style={{
               marginTop:
                 10,
@@ -2203,14 +2394,14 @@ const selectedHourStatus =
           {activeEntrySyncStatus && (
             <div
               role="status"
-              className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+              className={`gv-parameter-slot-sync mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${
                 activeEntrySyncStatus === "SYNCED"
                   ? "bg-emerald-50 text-emerald-700"
                   : activeEntrySyncStatus === "PENDING"
                   ? "bg-amber-50 text-amber-800"
                   : "bg-red-50 text-red-700"
               }`}
-              title={activeEntrySyncStatus === "FAILED" ? queuedEntry?.lastError ?? "This entry will be retried." : undefined}
+              title={activeEntrySyncStatus === "NEEDS_ATTENTION" ? queuedEntry?.lastError ?? "This entry needs review." : undefined}
             >
               {activeEntrySyncStatus === "SYNCED" ? (
                 <CheckCircle2 className="h-3.5 w-3.5" />
@@ -2223,7 +2414,7 @@ const selectedHourStatus =
                 ? "Synced"
                 : activeEntrySyncStatus === "PENDING"
                 ? "Pending Sync"
-                : "Sync Failed"}
+                : "Needs Attention"}
             </div>
           )}
         </div>
@@ -2233,6 +2424,7 @@ const selectedHourStatus =
         ================================================== */}
 
         <div
+          className="gv-parameter-workspace"
           style={{
             marginTop:
               16,
@@ -2254,6 +2446,7 @@ const selectedHourStatus =
           }}
         >
           <div
+            className="gv-parameter-workspace-heading"
             style={{
               padding:
                 "14px 16px",
@@ -2303,12 +2496,17 @@ const selectedHourStatus =
             </p>
           </div>
 
+          <h4 className="gv-parameter-group gv-parameter-group-electrical">Electrical Parameters</h4>
+          <h4 className="gv-parameter-group gv-parameter-group-transformer">Transformer Parameters</h4>
+          <h4 className="gv-parameter-group gv-parameter-group-notes">Operational Notes</h4>
+
           {PARAMETERS.map(
             (
               parameter,
               index
             ) => (
               <div
+                className={`gv-parameter-field gv-parameter-${parameter.key}`}
                 key={
                   parameter.key
                 }
@@ -2486,7 +2684,20 @@ const selectedHourStatus =
             SAVE BUTTON
         ================================================== */}
 
+        {draftStatus && (
+          <div role="status" className={`gv-operator-draft mt-3 text-center text-[11px] font-semibold ${draftStatus === "FAILED" ? "text-red-700" : "text-slate-500"}`}>
+            {draftStatus === "SAVING"
+              ? "Saving draft…"
+              : draftStatus === "SAVED"
+                ? "Draft saved locally"
+                : draftStatus === "RESTORED"
+                  ? "Unsaved draft restored"
+                  : "Draft save failed — device storage may be full; keep this page open and free storage before retrying"}
+          </div>
+        )}
+
         <button
+          className="gv-operator-save"
           type="button"
 
           onClick={() =>

@@ -6,6 +6,7 @@ import {
   getOfflineStorage,
   type StoredOperation,
 } from './offlineStorage';
+import { recordStorageFailure } from './diagnostics';
 
 // Offline cache + pending sync queue backed by localStorage.
 // Cache writes are best-effort. Queue writes are durable-or-fail because an
@@ -18,11 +19,14 @@ export const OFFLINE_QUEUE_CHANGED_EVENT = 'gv-offline-queue-changed';
 
 export type QueuedMethod = 'POST' | 'PATCH' | 'DELETE';
 export type OfflineEntryMode = 'ONLINE' | 'OFFLINE';
+export type SyncFailureCategory = 'TRANSIENT' | 'AUTHORIZATION' | 'CONFLICT' | 'VALIDATION' | 'DEPENDENCY' | 'UNKNOWN';
+export type QueuedSyncState = 'PENDING' | 'NEEDS_ATTENTION';
 export type OfflineOperationType =
   | 'ADD_LOG_ENTRY'
   | 'UPDATE_LOG_ENTRY'
   | 'ADD_INTERRUPTION'
   | 'RESTORE_INTERRUPTION'
+  | 'UPDATE_INTERRUPTION_ETR'
   | 'GENERIC_POST'
   | 'GENERIC_PATCH'
   | 'GENERIC_DELETE'
@@ -44,12 +48,17 @@ export type QueuedOp = {
   dependsOn?: string[];
   retryCount: number;
   lastError: string | null;
+  failureCategory?: SyncFailureCategory;
+  syncState?: QueuedSyncState;
+  lastAttemptAt?: number;
+  lastHttpStatus?: number;
+  lastDatabaseCode?: string;
   enqueuedAt: number;
   ownerUserId?: string;
 };
 
 export type EnqueueOpInput = Pick<QueuedOp, 'method' | 'table'> & Partial<Omit<QueuedOp, 'id' | 'method' | 'table' | 'enqueuedAt'>>;
-export type QueuedOpUpdate = Partial<Pick<QueuedOp, 'serverEntityId' | 'dependsOn' | 'retryCount' | 'lastError'>>;
+export type QueuedOpUpdate = Partial<Pick<QueuedOp, 'serverEntityId' | 'dependsOn' | 'retryCount' | 'lastError' | 'failureCategory' | 'syncState' | 'lastAttemptAt' | 'lastHttpStatus' | 'lastDatabaseCode'>>;
 
 export type AuthorizedOperationalScopeCache = {
   version: typeof AUTHORIZED_SCOPE_SCHEMA_VERSION;
@@ -62,7 +71,7 @@ export type AuthorizedOperationalScopeCache = {
 
 export class OfflineQueuePersistenceError extends Error {
   constructor(cause?: unknown) {
-    super('Could not save this offline operation. Device storage may be unavailable or full. Please free storage and try again.');
+    super('GridVision could not safely store this record on this device because local storage may be unavailable or full. Free device storage and try again.');
     void cause;
     this.name = 'OfflineQueuePersistenceError';
   }
@@ -83,10 +92,25 @@ export function readCache<T>(key: string): T | null {
 
 export function writeCache<T>(key: string, value: T): void {
   try {
-    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ value, ts: Date.now() }));
+    writeCacheOrThrow(key, value);
   } catch {
-    // Read caches are an optimization and may fail without blocking the action.
+    // Under storage pressure, remove only rebuildable caches and retry once.
+    // Authorized scope is required for verified offline startup and is protected.
+    try {
+      const target = CACHE_PREFIX + key;
+      Object.keys(localStorage)
+        .filter((storedKey) => storedKey.startsWith(CACHE_PREFIX) && storedKey !== target && !storedKey.startsWith(CACHE_PREFIX + AUTHORIZED_SCOPE_CACHE_PREFIX))
+        .forEach((storedKey) => localStorage.removeItem(storedKey));
+      writeCacheOrThrow(key, value);
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('gv-storage-maintenance'));
+    } catch {
+      // Successful server reads remain usable even when their disposable cache cannot be updated.
+    }
   }
+}
+
+export function writeCacheOrThrow<T>(key: string, value: T): void {
+  localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ value, ts: Date.now() }));
 }
 
 export function clearCache(key: string): void {
@@ -123,6 +147,10 @@ function inferOperationType(method: QueuedMethod): OfflineOperationType {
 
 function asPositiveTimestamp(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function isFailureCategory(value: unknown): value is SyncFailureCategory {
+  return value === 'TRANSIENT' || value === 'AUTHORIZATION' || value === 'CONFLICT' || value === 'VALIDATION' || value === 'DEPENDENCY' || value === 'UNKNOWN';
 }
 
 function asOptionalString(value: unknown): string | undefined {
@@ -192,6 +220,11 @@ export function normalizeQueuedOp(value: unknown, fallbackTimestamp = Date.now()
     ...(dependsOn?.length ? { dependsOn } : {}),
     retryCount: typeof value.retryCount === 'number' && Number.isInteger(value.retryCount) && value.retryCount >= 0 ? value.retryCount : 0,
     lastError: typeof value.lastError === 'string' ? value.lastError.slice(0, 240) : null,
+    ...(isFailureCategory(value.failureCategory) ? { failureCategory: value.failureCategory } : {}),
+    ...(value.syncState === 'PENDING' || value.syncState === 'NEEDS_ATTENTION' ? { syncState: value.syncState } : {}),
+    ...(typeof value.lastAttemptAt === 'number' && Number.isFinite(value.lastAttemptAt) && value.lastAttemptAt > 0 ? { lastAttemptAt: value.lastAttemptAt } : {}),
+    ...(typeof value.lastHttpStatus === 'number' && Number.isInteger(value.lastHttpStatus) ? { lastHttpStatus: value.lastHttpStatus } : {}),
+    ...(asOptionalString(value.lastDatabaseCode) ? { lastDatabaseCode: asOptionalString(value.lastDatabaseCode)?.slice(0, 20) } : {}),
     enqueuedAt,
     ...(asOptionalString(value.ownerUserId) ? { ownerUserId: asOptionalString(value.ownerUserId) } : {}),
   };
@@ -290,13 +323,17 @@ export async function enqueueOp(op: EnqueueOpInput): Promise<QueuedOp> {
     recordedAt: op.recordedAt ?? now,
     retryCount: op.retryCount ?? 0,
     lastError: op.lastError ?? null,
+    syncState: op.syncState ?? 'PENDING',
     enqueuedAt: now,
   }, now);
   if (!full) throw new Error('Invalid offline operation.');
   await serializeMutation(async () => {
     await ensureInitialized();
     await getOfflineStorage().putOperation(full);
-  }).catch((cause) => { throw new OfflineQueuePersistenceError(cause); });
+  }).catch((cause) => {
+    if (op.ownerUserId) void recordStorageFailure(op.ownerUserId);
+    throw new OfflineQueuePersistenceError(cause);
+  });
   notifyQueueChanged();
   return full;
 }
@@ -330,7 +367,9 @@ export async function enqueueOrConsolidateLogBookOp(op: EnqueueOpInput): Promise
       const existing = queue[index];
       result = normalizeQueuedOp({ ...existing, body: isRecord(existing.body) && isRecord(op.body) ? { ...existing.body, ...op.body } : op.body,
         operationType: existing.method === 'POST' ? 'ADD_LOG_ENTRY' : 'UPDATE_LOG_ENTRY', eventTime: op.eventTime ?? existing.eventTime,
-        recordedAt: op.recordedAt ?? Date.now(), entryMode: 'OFFLINE', retryCount: 0, lastError: null }, existing.enqueuedAt);
+        recordedAt: op.recordedAt ?? Date.now(), entryMode: 'OFFLINE', retryCount: 0, lastError: null,
+        syncState: 'PENDING', failureCategory: undefined, lastAttemptAt: undefined,
+        lastHttpStatus: undefined, lastDatabaseCode: undefined }, existing.enqueuedAt);
       if (!result) throw new Error('Invalid offline log-book operation.');
       queue[index] = result;
       return queue;
@@ -338,7 +377,11 @@ export async function enqueueOrConsolidateLogBookOp(op: EnqueueOpInput): Promise
     notifyQueueChanged();
     if (!result) throw new Error('Offline log-book operation was not persisted.');
     return result;
-  }).catch((cause) => { if (cause instanceof OfflineQueuePersistenceError) throw cause; throw new OfflineQueuePersistenceError(cause); });
+  }).catch((cause) => {
+    if (op.ownerUserId) void recordStorageFailure(op.ownerUserId);
+    if (cause instanceof OfflineQueuePersistenceError) throw cause;
+    throw new OfflineQueuePersistenceError(cause);
+  });
 }
 
 export async function getQueuedLogBookOp(stationId: string, feederId: string, eventTime: string, ownerUserId: string): Promise<QueuedOp | undefined> {
@@ -393,6 +436,24 @@ export async function enqueueInterruptionRestore(input: {
   });
 }
 
+export async function updateQueuedInterruptionAddEtr(localEntityId: string, etr: string | null, ownerUserId: string): Promise<QueuedOp> {
+  let updated: QueuedOp | null = null;
+  await serializeMutation(async () => {
+    await ensureInitialized();
+    await getOfflineStorage().mutateOperations((stored) => normalizedStoredQueue(stored).map((operation) => {
+      if (operation.ownerUserId !== ownerUserId || operation.operationType !== 'ADD_INTERRUPTION'
+        || operation.localEntityId !== localEntityId || !isRecord(operation.body)) return operation;
+      updated = { ...operation, body: { ...operation.body, etr }, retryCount: 0, lastError: null,
+        failureCategory: undefined, syncState: 'PENDING', lastAttemptAt: undefined,
+        lastHttpStatus: undefined, lastDatabaseCode: undefined };
+      return updated;
+    }));
+  });
+  if (!updated) throw new Error('The pending interruption could not be found. Reopen the page and try again.');
+  notifyQueueChanged();
+  return updated;
+}
+
 export async function getQueuedInterruptionOperations(ownerUserId: string, stationId?: string): Promise<QueuedOp[]> {
   return (await getQueue(ownerUserId)).filter((op) => {
     if (op.table !== 'interruptions' || !isRecord(op.body)) return false;
@@ -444,7 +505,15 @@ export async function completeQueuedInterruptionAdd(addOperationId: string, serv
 }
 
 export async function getQueuedOp(id: string, ownerUserId?: string): Promise<QueuedOp | undefined> {
-  return (await getQueue(ownerUserId)).find((op) => op.id === id || op.clientOperationId === id);
+  await ensureInitialized();
+  const stored = await getOfflineStorage().getOperation(id);
+  if (stored) {
+    const operation = normalizeQueuedOp(stored);
+    if (!operation) throw new OfflineStorageError('Offline storage contains an invalid operation.');
+    if (!ownerUserId || operation.ownerUserId === ownerUserId) return operation;
+    return undefined;
+  }
+  return (await getQueue(ownerUserId)).find((op) => op.clientOperationId === id);
 }
 
 export async function updateQueuedOp(id: string, changes: QueuedOpUpdate): Promise<QueuedOp | null> {
@@ -465,7 +534,14 @@ export async function updateQueuedOp(id: string, changes: QueuedOpUpdate): Promi
 }
 
 export async function dequeueOp(id: string): Promise<void> {
-  await dequeueOps([id]);
+  await serializeMutation(async () => {
+    await ensureInitialized();
+    const storage = getOfflineStorage();
+    const stored = await storage.getOperation(id);
+    if (stored) await storage.deleteOperation(id);
+    else await storage.mutateOperations((values) => normalizedStoredQueue(values).filter((op) => op.clientOperationId !== id));
+  });
+  notifyQueueChanged();
 }
 
 export async function dequeueOps(ids: string[]): Promise<void> {
@@ -480,4 +556,47 @@ export async function dequeueOps(ids: string[]): Promise<void> {
 
 export async function queueLength(ownerUserId?: string): Promise<number> {
   return (await getQueue(ownerUserId)).length;
+}
+
+export type QueueHealth = {
+  total: number;
+  pending: number;
+  needsAttention: number;
+  oldestEnqueuedAt: number | null;
+  lastSuccessfulSyncAt: number | null;
+};
+
+const LAST_SUCCESSFUL_SYNC_PREFIX = 'last-successful-sync:';
+
+export async function getQueueHealth(ownerUserId: string, knownOperations?: QueuedOp[]): Promise<QueueHealth> {
+  const operations = knownOperations ?? await getQueue(ownerUserId);
+  const storedLastSync = await getOfflineStorage().getMetadata<unknown>(LAST_SUCCESSFUL_SYNC_PREFIX + ownerUserId);
+  return {
+    total: operations.length,
+    pending: operations.filter((op) => op.syncState !== 'NEEDS_ATTENTION').length,
+    needsAttention: operations.filter((op) => op.syncState === 'NEEDS_ATTENTION').length,
+    oldestEnqueuedAt: operations.length ? Math.min(...operations.map((op) => op.enqueuedAt)) : null,
+    lastSuccessfulSyncAt: typeof storedLastSync === 'number' && Number.isFinite(storedLastSync) && storedLastSync > 0
+      ? storedLastSync
+      : null,
+  };
+}
+
+export async function recordSuccessfulQueueSync(ownerUserId: string): Promise<void> {
+  await getOfflineStorage().setMetadata(LAST_SUCCESSFUL_SYNC_PREFIX + ownerUserId, Date.now());
+  notifyQueueChanged();
+}
+
+export async function markQueuedOperationsAuthorizationAttention(ownerUserId: string): Promise<void> {
+  await serializeMutation(async () => {
+    await ensureInitialized();
+    await getOfflineStorage().mutateOperations((stored) => normalizedStoredQueue(stored).map((op) => op.ownerUserId === ownerUserId ? {
+      ...op,
+      syncState: 'NEEDS_ATTENTION' as const,
+      failureCategory: 'AUTHORIZATION' as const,
+      lastAttemptAt: Date.now(),
+      lastError: 'Your access changed before this record could synchronize. The record remains safely stored on this device.',
+    } : op));
+  });
+  notifyQueueChanged();
 }

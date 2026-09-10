@@ -20,6 +20,24 @@ interface NotificationRequest {
   message?: string;
 }
 
+const MAX_REQUEST_BYTES = 16 * 1024;
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  let difference = leftBytes.length ^ rightBytes.length;
+  const length = Math.max(leftBytes.length, rightBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    difference |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+  return difference === 0;
+}
+
+function isServiceRoleRequest(request: Request, serviceRoleKey: string): boolean {
+  const authorization = request.headers.get("Authorization") ?? "";
+  return constantTimeEqual(authorization, `Bearer ${serviceRoleKey}`);
+}
+
 function presentationTitle(title: string, notificationClass?: NotificationRequest["notification_class"]): string {
   if (notificationClass === "DELAYED_SYNC" && !title.startsWith("Delayed Sync ·")) return `Delayed Sync · ${title}`;
   if (notificationClass === "HISTORICAL_SYNC" && !title.startsWith("Historical Sync ·")) return `Historical Sync · ${title}`;
@@ -148,6 +166,13 @@ Deno.serve(async (req) => {
     });
   }
 
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ success: false, error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json", "Allow": "POST" },
+    });
+  }
+
   try {
     // --------------------------------------------------
     // Environment variables
@@ -158,6 +183,13 @@ Deno.serve(async (req) => {
 
     const supabaseServiceRoleKey =
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    if (!supabaseServiceRoleKey || !isServiceRoleRequest(req, supabaseServiceRoleKey)) {
+      return new Response(JSON.stringify({ success: false, error: "Unauthorised" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const firebaseProjectId =
       Deno.env.get("FIREBASE_PROJECT_ID")!;
@@ -181,6 +213,26 @@ Deno.serve(async (req) => {
     // Request body
     // --------------------------------------------------
 
+    const rawBody = await req.text();
+    if (new TextEncoder().encode(rawBody).length > MAX_REQUEST_BYTES) {
+      return new Response(JSON.stringify({ success: false, error: "Request is too large" }), {
+        status: 413,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    let requestBody: NotificationRequest;
+    try {
+      const parsed: unknown = JSON.parse(rawBody);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid JSON object");
+      requestBody = parsed as NotificationRequest;
+    } catch {
+      return new Response(JSON.stringify({ success: false, error: "Invalid JSON request" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const {
       user_id,
       title,
@@ -192,9 +244,22 @@ Deno.serve(async (req) => {
       station_id,
       feeder_id,
       message,
-    }: NotificationRequest = await req.json();
+    } = requestBody;
+
+    if (
+      typeof user_id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(user_id) ||
+      typeof title !== "string" || title.length < 1 || title.length > 160 ||
+      typeof body !== "string" || body.length < 1 || body.length > 2000
+    ) {
+      return new Response(JSON.stringify({ success: false, error: "Invalid notification request" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const displayTitle = presentationTitle(title, notification_class);
+    const showDisplayTitle = displayTitle.trim().toLocaleLowerCase() !== "gridvision notification";
 
     if (!user_id) {
       return new Response(
@@ -230,9 +295,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(
-      `Looking for device tokens for user: ${user_id}`,
-    );
+    console.log("Looking for registered notification devices.");
 
     // --------------------------------------------------
     // Get active device tokens for target user
@@ -296,9 +359,7 @@ Deno.serve(async (req) => {
 
     for (const device of devices) {
       try {
-        console.log(
-          `Sending notification to device ${device.id}`,
-        );
+        console.log("Sending notification to a registered device.");
 
         const firebaseResponse = await fetch(
           `https://fcm.googleapis.com/v1/projects/${firebaseProjectId}/messages:send`,
@@ -314,7 +375,7 @@ Deno.serve(async (req) => {
                 token: device.fcm_token,
 
                 notification: {
-                  title: displayTitle,
+                  ...(showDisplayTitle ? { title: displayTitle } : {}),
                   body,
                 },
 
@@ -323,12 +384,12 @@ Deno.serve(async (req) => {
                   notification: {
                     sound: "default",
                     channel_id:
-                      "default",
+                      "gridvision_urgent",
                   },
                 },
 
                 data: {
-                  title: displayTitle,
+                  ...(showDisplayTitle ? { title: displayTitle } : {}),
                   body,
                   ...(notification_class ? { notification_class } : {}),
                   ...(event_time ? { event_time } : {}),
@@ -361,9 +422,7 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        console.log(
-          `Notification sent successfully to device ${device.id}`,
-        );
+        console.log("Notification sent successfully.");
 
         results.push({
           device_id: device.id,

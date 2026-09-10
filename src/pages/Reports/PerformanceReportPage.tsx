@@ -13,6 +13,7 @@ import {
   getReportPeriodDates,
   getReportPeriodLabel,
   getReportRangeIso,
+  loadAllReportRows,
   ReportActions,
   ReportFilters,
   ReportPageShell,
@@ -111,6 +112,15 @@ export function PerformanceReportPage({ entity, onBack }: { entity: PerformanceR
   ] : [], [entity, summary]);
 
   const activeFilters = loadedReport?.filters ?? filters;
+  const loadAllRows = useCallback(async () => {
+    if (!loadedReport) return [];
+    const active = loadedReport.filters;
+    const { startIso, endIso } = getReportRangeIso(active);
+    return loadAllReportRows(loadedReport.total, (page, pageSize) => api.getPerformanceReportPage(
+      startIso, endIso, entity, loadedReport.metric, page, pageSize, active.stationId || null,
+      entity === 'FEEDER' ? active.feederId || null : null,
+    ));
+  }, [entity, loadedReport]);
   const title = entity === 'STATION' ? 'Station Performance Report' : 'Feeder Performance Report';
   const stationScope = activeFilters.stationId ? stations.find((station) => station.id === activeFilters.stationId)?.name ?? 'Selected station' : 'All accessible stations';
   const feederScope = entity === 'FEEDER' && activeFilters.feederId ? feeders.find((feeder) => feeder.id === activeFilters.feederId)?.name ?? 'Selected feeder' : undefined;
@@ -121,7 +131,7 @@ export function PerformanceReportPage({ entity, onBack }: { entity: PerformanceR
     onBack={onBack}
     contentRef={contentRef}
     desktopWide
-    actions={<ReportActions title={title} contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+    actions={<ReportActions title={title} contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf totalRows={loadedReport?.total ?? resource.rows.length} loadAllRows={loadAllRows} />}
     filters={<ReportFilters values={filters} options={{ stations, feeders, feederApplicable: entity === 'FEEDER' && Boolean(filters.stationId), comparisonMetricOptions: METRICS }} generating={resource.loading} onChange={setFilters} onGenerate={generate} desktopLayout />}
   >
     {loadedReport ? <ReportPreview

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from 'react';
 
@@ -33,6 +34,8 @@ import type {
 ========================================================= */
 
 export function useStations() {
+  const loadGeneration = useRef(0);
+  const authenticatedUserRef = useRef<string | null>(null);
   const [
     stations,
     setStations,
@@ -69,6 +72,7 @@ export function useStations() {
 
   const load =
     useCallback(async () => {
+      const generation = ++loadGeneration.current;
       setLoading(true);
       setError(null);
 
@@ -79,12 +83,17 @@ export function useStations() {
         if (!userId) {
           throw new Error('An authenticated session is required to load operational scope.');
         }
+        if (generation !== loadGeneration.current) return false;
+        authenticatedUserRef.current = userId;
+        const isCurrentUserRequest = () => generation === loadGeneration.current && authenticatedUserRef.current === userId;
 
         if (!isOnline()) {
           const cachedScope = readAuthorizedOperationalScope(userId);
           if (!cachedScope) {
             throw new Error('Offline operational scope is unavailable. Connect once to refresh your authorized stations and feeders.');
           }
+
+          if (!isCurrentUserRequest()) return false;
 
           setStations(cachedScope.stations);
           setFeeders(cachedScope.feeders);
@@ -108,6 +117,7 @@ export function useStations() {
           api.getStations(),
           api.getMyAccessibleStationIds(),
         ]);
+        if (!isCurrentUserRequest()) return false;
 
         /* -------------------------------------------------
            No accessible stations
@@ -172,6 +182,7 @@ export function useStations() {
         setFeedersLoading(true);
         const authorizedStationIds = accessibleStations.map((station) => station.id);
         const accessibleFeeders = await api.getFeedersForStations(authorizedStationIds);
+        if (!isCurrentUserRequest()) return false;
 
         writeAuthorizedOperationalScope({
           userId,
@@ -213,10 +224,8 @@ export function useStations() {
         );
         return true;
       } catch (e) {
-        console.error(
-          'Failed to load accessible stations:',
-          e
-        );
+        if (generation !== loadGeneration.current) return false;
+        console.error('Accessible station scope could not be loaded.');
 
         setStations([]);
         setFeeders([]);
@@ -229,8 +238,10 @@ export function useStations() {
         );
         return false;
       } finally {
-        setFeedersLoading(false);
-        setLoading(false);
+        if (generation === loadGeneration.current) {
+          setFeedersLoading(false);
+          setLoading(false);
+        }
       }
     }, []);
 
@@ -254,7 +265,8 @@ export function useStations() {
     } =
       supabase.auth.onAuthStateChange(
         (
-          event
+          event,
+          session
         ) => {
           /* -----------------------------------------------
              LOGOUT
@@ -264,6 +276,8 @@ export function useStations() {
             event ===
             'SIGNED_OUT'
           ) {
+            loadGeneration.current += 1;
+            authenticatedUserRef.current = null;
             setStations([]);
             setFeeders([]);
             setActiveStationId('');
@@ -280,6 +294,7 @@ export function useStations() {
             event ===
             'SIGNED_IN'
           ) {
+            authenticatedUserRef.current = session?.user.id ?? null;
             /*
              * Run outside the Supabase auth callback.
              */

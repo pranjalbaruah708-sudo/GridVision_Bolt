@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { OFFLINE_QUEUE_CHANGED_EVENT, queueLength as queueLen } from '@/services/offline';
 import { flushQueue } from '@/services/api';
 import { supabase } from '@/services/supabase';
+import { APP_RESUMED_EVENT } from '@/services/platform/runtime';
 
 // Tracks online/offline state and flushes the pending sync queue when
 // connectivity returns.
@@ -37,6 +38,7 @@ export function useOnlineStatus() {
     window.addEventListener('offline', onOffline);
     const onQueueChanged = () => { void refreshQueue(); };
     window.addEventListener(OFFLINE_QUEUE_CHANGED_EVENT, onQueueChanged);
+    window.addEventListener(APP_RESUMED_EVENT, onOnline);
     void refreshQueue();
 
     // Queue replay is started by App only after online identity and scope
@@ -46,6 +48,7 @@ export function useOnlineStatus() {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
       window.removeEventListener(OFFLINE_QUEUE_CHANGED_EVENT, onQueueChanged);
+      window.removeEventListener(APP_RESUMED_EVENT, onOnline);
     };
   }, []);
 

@@ -12,6 +12,7 @@ import {
   getReportPeriodDates,
   getReportPeriodLabel,
   getReportRangeIso,
+  loadAllReportRows,
   ReportActions,
   ReportFilters,
   ReportPageShell,
@@ -162,6 +163,15 @@ export function InterruptionReportPage({ onBack }: { onBack: () => void }) {
   }, [aggregates]);
 
   const activeFilters = loadedReport?.filters ?? filters;
+  const loadAllRows = useCallback(async () => {
+    if (!loadedReport) return [];
+    const active = loadedReport.filters;
+    const { startIso, endIso } = getReportRangeIso(active);
+    return loadAllReportRows(loadedReport.total, (page, pageSize) => api.getInterruptionReportPage(
+      startIso, endIso, stations.map((station) => station.id), page, pageSize,
+      active.stationId || null, active.feederId || null, (active.status || null) as InterruptionStatus | null, active.cause || null,
+    ));
+  }, [loadedReport, stations]);
   const stationScope = activeFilters.stationId ? stationById.get(activeFilters.stationId)?.name ?? 'Selected station' : 'All accessible stations';
   const feederScope = activeFilters.feederId ? feederById.get(activeFilters.feederId)?.name ?? 'Selected feeder' : 'All applicable feeders';
   const highlightedBreakdown = activeFilters.grouping === 'FEEDER' ? aggregates?.feeders : activeFilters.grouping === 'CAUSE' ? aggregates?.causes : aggregates?.stations;
@@ -173,7 +183,7 @@ export function InterruptionReportPage({ onBack }: { onBack: () => void }) {
       onBack={onBack}
       contentRef={contentRef}
       desktopWide
-      actions={<ReportActions title="Interruption Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf />}
+      actions={<ReportActions title="Interruption Report" contentRef={contentRef} rows={resource.rows} columns={columns} disabled={resource.loading} primaryPdf totalRows={loadedReport?.total ?? resource.rows.length} loadAllRows={loadAllRows} />}
       filters={<ReportFilters values={filters} options={{
         stations, feeders, feederApplicable: true,
         statusOptions: [{ value: 'OPEN', label: 'Open' }, { value: 'RESTORED', label: 'Restored' }],
