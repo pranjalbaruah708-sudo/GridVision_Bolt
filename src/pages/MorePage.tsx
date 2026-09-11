@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { ArrowLeft, ChevronRight, ClipboardPenLine, FileCog, GitBranch, HelpCircle, LogOut, Network, Power, Settings, ShieldCheck, SlidersHorizontal, UsersRound, ZapOff } from 'lucide-react';
+import { ArrowLeft, CalendarDays, ChevronRight, ClipboardPenLine, Clock3, FileCog, GitBranch, HelpCircle, LogOut, Network, Power, Settings, ShieldCheck, SlidersHorizontal, UsersRound, ZapOff } from 'lucide-react';
 import { PageBody } from '@/components/ui/Page';
 import { ExitAppConfirmationDialog } from '@/components/ExitAppConfirmationDialog';
 import { SignOutConfirmationDialog } from '@/components/SignOutConfirmationDialog';
@@ -9,16 +9,18 @@ import { getRoleLabel, hasCapability, type AppRole, type Capability } from '@/se
 import { isAndroidApp, minimizeAndroidApp } from '@/services/platform/runtime';
 import { DesktopPageContainer } from '@/components/layout/DesktopPageContainer';
 
-export type MoreDestination = 'profile' | 'operator-entry' | 'interruption-entry' | 'organisation-structure' | 'network-master-data' | 'users-access' | 'system-configuration' | 'audit-activity' | 'settings' | 'help-about';
+export type MoreDestination = 'profile' | 'current-shift' | 'shift-schedule' | 'operator-entry' | 'interruption-entry' | 'organisation-structure' | 'network-master-data' | 'users-access' | 'system-configuration' | 'audit-activity' | 'settings' | 'help-about';
 
 type MenuItem = { id: MoreDestination; label: string; description: string; icon: LucideIcon; tone: string; capabilities?: readonly Capability[]; badge?: (role: AppRole) => string | null };
 
 const OPERATIONAL_ITEMS: MenuItem[] = [
+  { id: 'current-shift', label: 'Current Shift', description: 'Start or end duty and view the shift team', icon: Clock3, tone: 'bg-emerald-600' },
   { id: 'operator-entry', label: 'Parameter Entry', description: 'Record substation operating readings', icon: ClipboardPenLine, tone: 'bg-blue-600', capabilities: ['create_parameter_entry'] },
   { id: 'interruption-entry', label: 'Interruption Entry', description: 'Record feeder trips and restoration', icon: ZapOff, tone: 'bg-red-600', capabilities: ['create_interruption_entry'] },
 ];
 
 const ADMINISTRATION_ITEMS: MenuItem[] = [
+  { id: 'shift-schedule', label: 'Shift Schedule & Roster', description: 'Plan future shifts and authorised rosters', icon: CalendarDays, tone: 'bg-blue-600', capabilities: ['view_administration'] },
   { id: 'organisation-structure', label: 'Organisation Structure', description: 'View organisational and station hierarchy', icon: GitBranch, tone: 'bg-violet-600', capabilities: ['view_organisation_structure'], badge: (role) => hasCapability(role, 'manage_offices') ? 'Manage' : 'View' },
   { id: 'network-master-data', label: 'Network Master Data', description: 'Stations, feeders and network configuration', icon: Network, tone: 'bg-cyan-600', capabilities: ['manage_scoped_feeders', 'manage_all_feeders'] },
   { id: 'users-access', label: 'Users & Access', description: 'View and manage authorised users', icon: UsersRound, tone: 'bg-indigo-600', capabilities: ['view_scoped_users', 'manage_users'] },
@@ -34,6 +36,7 @@ const SUPPORT_ITEMS: MenuItem[] = [
 export function getAvailableMoreNavigation(role: AppRole): Array<{ id: MoreDestination; label: string }> {
   return [
     { id: 'profile' as const, label: 'My Profile' },
+    { id: 'current-shift' as const, label: 'Current Shift' },
     ...ADMINISTRATION_ITEMS.filter((item) => isAllowed(item, role)).map(({ id, label }) => ({ id, label })),
     { id: 'help-about' as const, label: 'Help & About' },
   ];

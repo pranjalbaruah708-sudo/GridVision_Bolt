@@ -103,6 +103,97 @@ export type ParameterAlert = {
   notification_suppressed: boolean;
 };
 
+export type StationShiftStatus = 'SCHEDULED' | 'ACTIVE' | 'CLOSED' | 'CANCELLED';
+export type ShiftDutyStatus = 'ON_DUTY' | 'ENDED';
+export type ShiftRole = 'MEMBER' | 'IN_CHARGE';
+export type ShiftHandoverStatus = 'DRAFT' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED';
+export type ShiftHandoverSourceType = 'INTERRUPTION' | 'PARAMETER_ALERT' | 'LOGBOOK_ENTRY' | 'OPERATIONAL_NOTE';
+
+export type StationShift = {
+  id: string;
+  station_id: string;
+  shift_date: string;
+  shift_name: string;
+  scheduled_start: string;
+  scheduled_end: string;
+  status: StationShiftStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ShiftDutySession = {
+  id: string;
+  shift_id: string;
+  station_id: string;
+  user_id: string;
+  shift_role: ShiftRole;
+  started_at: string;
+  ended_at: string | null;
+  status: ShiftDutyStatus;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ShiftRosterAssignment = {
+  id: string;
+  shift_id: string;
+  user_id: string;
+  full_name: string;
+  duty_role: ShiftRole;
+  created_at: string;
+};
+
+export type ShiftRosterAssignmentInput = {
+  userId: string;
+  dutyRole: ShiftRole;
+};
+
+export type StationShiftScheduleInput = {
+  id?: string | null;
+  stationId: string;
+  shiftDate: string;
+  shiftName: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+};
+
+export type ShiftHandover = {
+  id: string;
+  station_id: string;
+  outgoing_shift_id: string;
+  incoming_shift_id: string;
+  status: ShiftHandoverStatus;
+  prepared_by_user_id: string | null;
+  submitted_by_user_id: string | null;
+  submitted_at: string | null;
+  accepted_by_user_id: string | null;
+  accepted_at: string | null;
+  outgoing_notes: string | null;
+  acceptance_comments: string | null;
+  snapshot: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ShiftHandoverItem = {
+  id: string;
+  handover_id: string;
+  source_type: ShiftHandoverSourceType;
+  source_id: string | null;
+  description: string | null;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type ShiftHandoverDraftItemInput = {
+  source_type: ShiftHandoverSourceType;
+  source_id?: string | null;
+  description?: string | null;
+  priority?: ShiftHandoverItem['priority'];
+};
+
 export type OrgUnitType = { unit_type: string; hierarchy_rank: number };
 export type OrgUnitRow = { id: string; code: string; name: string; unit_type: string; parent_id: string | null; parent_name: string | null; active: boolean; archived_at: string | null; child_count: number; station_count: number };
 export type OrgUnitPage = { rows: OrgUnitRow[]; total: number };
@@ -837,6 +928,56 @@ async function restPost<T>(
    PUBLIC API
 ========================================================= */
 
+function mapStationShift(row: Record<string, unknown>): StationShift {
+  return {
+    id: String(row.id), station_id: String(row.station_id), shift_date: String(row.shift_date),
+    shift_name: String(row.shift_name), scheduled_start: String(row.scheduled_start), scheduled_end: String(row.scheduled_end),
+    status: String(row.status) as StationShiftStatus, created_by: row.created_by == null ? null : String(row.created_by),
+    created_at: String(row.created_at), updated_at: String(row.updated_at),
+  };
+}
+
+function mapShiftDutySession(row: Record<string, unknown>): ShiftDutySession {
+  return {
+    id: String(row.id), shift_id: String(row.shift_id), station_id: String(row.station_id), user_id: String(row.user_id),
+    shift_role: String(row.shift_role) as ShiftRole, started_at: String(row.started_at), ended_at: row.ended_at == null ? null : String(row.ended_at),
+    status: String(row.status) as ShiftDutyStatus, created_at: String(row.created_at), updated_at: String(row.updated_at),
+  };
+}
+
+function mapShiftRosterAssignment(row: Record<string, unknown>): ShiftRosterAssignment {
+  return {
+    id: String(row.id), shift_id: String(row.shift_id), user_id: String(row.user_id),
+    full_name: String(row.full_name), duty_role: String(row.duty_role) as ShiftRole,
+    created_at: String(row.created_at),
+  };
+}
+
+function mapShiftHandover(row: Record<string, unknown>): ShiftHandover {
+  return {
+    id: String(row.id), station_id: String(row.station_id), outgoing_shift_id: String(row.outgoing_shift_id), incoming_shift_id: String(row.incoming_shift_id),
+    status: String(row.status) as ShiftHandoverStatus,
+    prepared_by_user_id: row.prepared_by_user_id == null ? null : String(row.prepared_by_user_id),
+    submitted_by_user_id: row.submitted_by_user_id == null ? null : String(row.submitted_by_user_id),
+    submitted_at: row.submitted_at == null ? null : String(row.submitted_at),
+    accepted_by_user_id: row.accepted_by_user_id == null ? null : String(row.accepted_by_user_id),
+    accepted_at: row.accepted_at == null ? null : String(row.accepted_at),
+    outgoing_notes: row.outgoing_notes == null ? null : String(row.outgoing_notes),
+    acceptance_comments: row.acceptance_comments == null ? null : String(row.acceptance_comments),
+    snapshot: row.snapshot && typeof row.snapshot === 'object' && !Array.isArray(row.snapshot) ? row.snapshot as Record<string, unknown> : null,
+    created_at: String(row.created_at), updated_at: String(row.updated_at),
+  };
+}
+
+function mapShiftHandoverItem(row: Record<string, unknown>): ShiftHandoverItem {
+  return {
+    id: String(row.id), handover_id: String(row.handover_id), source_type: String(row.source_type) as ShiftHandoverSourceType,
+    source_id: row.source_id == null ? null : String(row.source_id), description: row.description == null ? null : String(row.description),
+    priority: row.priority == null ? null : String(row.priority) as ShiftHandoverItem['priority'],
+    created_by: row.created_by == null ? null : String(row.created_by), created_at: String(row.created_at),
+  };
+}
+
 export const api = {
 
 
@@ -878,6 +1019,138 @@ export const api = {
     }
 
     return null;
+  },
+
+  /* =======================================================
+     SHIFT DUTY / HANDOVER / ROSTER
+  ======================================================= */
+
+  async startShiftDuty(shiftId: string, shiftRole: ShiftRole = 'MEMBER'): Promise<ShiftDutySession> {
+    const { data, error } = await supabase.rpc('start_shift_duty', { p_shift_id: shiftId, p_shift_role: shiftRole });
+    if (error) throw error;
+    return mapShiftDutySession(data as unknown as Record<string, unknown>);
+  },
+
+  async endShiftDuty(dutySessionId: string): Promise<ShiftDutySession> {
+    const { data, error } = await supabase.rpc('end_shift_duty', { p_duty_session_id: dutySessionId });
+    if (error) throw error;
+    return mapShiftDutySession(data as unknown as Record<string, unknown>);
+  },
+
+  async getOrCreateShiftHandover(outgoingShiftId: string, incomingShiftId: string): Promise<ShiftHandover> {
+    const { data, error } = await supabase.rpc('get_or_create_shift_handover', { p_outgoing_shift_id: outgoingShiftId, p_incoming_shift_id: incomingShiftId });
+    if (error) throw error;
+    return mapShiftHandover(data as unknown as Record<string, unknown>);
+  },
+
+  async submitShiftHandover(handoverId: string, outgoingNotes: string | null): Promise<ShiftHandover> {
+    const { data, error } = await supabase.rpc('submit_shift_handover', { p_handover_id: handoverId, p_outgoing_notes: outgoingNotes });
+    if (error) throw error;
+    return mapShiftHandover(data as unknown as Record<string, unknown>);
+  },
+
+  async saveShiftHandoverDraft(handoverId: string, outgoingNotes: string | null, items: ShiftHandoverDraftItemInput[]): Promise<ShiftHandover> {
+    const { data, error } = await supabase.rpc('save_shift_handover_draft', { p_handover_id: handoverId, p_outgoing_notes: outgoingNotes, p_items: items });
+    if (error) throw error;
+    return mapShiftHandover(data as unknown as Record<string, unknown>);
+  },
+
+  async acceptShiftHandover(handoverId: string, acceptanceComments: string | null = null): Promise<ShiftHandover> {
+    const { data, error } = await supabase.rpc('accept_shift_handover', { p_handover_id: handoverId, p_acceptance_comments: acceptanceComments });
+    if (error) throw error;
+    return mapShiftHandover(data as unknown as Record<string, unknown>);
+  },
+
+  async getCurrentStationShift(stationId: string): Promise<StationShift | null> {
+    const { data, error } = await supabase.rpc('get_current_station_shift', { p_station_id: stationId });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ? mapStationShift(row as Record<string, unknown>) : null;
+  },
+
+  async getMyShiftDutySession(shiftId: string): Promise<ShiftDutySession | null> {
+    const { data, error } = await supabase.rpc('get_my_shift_duty_session', { p_shift_id: shiftId });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ? mapShiftDutySession(row as Record<string, unknown>) : null;
+  },
+
+  async getShiftDutySessions(shiftId: string): Promise<ShiftDutySession[]> {
+    const { data, error } = await supabase.from('shift_duty_sessions').select('*').eq('shift_id', shiftId).order('started_at');
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapShiftDutySession(row));
+  },
+
+  async getPendingIncomingShiftHandover(stationId: string): Promise<ShiftHandover | null> {
+    const { data, error } = await supabase.rpc('get_pending_incoming_shift_handover', { p_station_id: stationId });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ? mapShiftHandover(row as Record<string, unknown>) : null;
+  },
+
+  async getShiftHandoverItems(handoverId: string): Promise<ShiftHandoverItem[]> {
+    const { data, error } = await supabase.from('shift_handover_items').select('*').eq('handover_id', handoverId).order('created_at');
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapShiftHandoverItem(row));
+  },
+
+  async getStationShiftAttendance(stationId: string, day: string): Promise<ShiftDutySession[]> {
+    const { data, error } = await supabase.rpc('get_station_shift_attendance', { p_station_id: stationId, p_day: day });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapShiftDutySession(row));
+  },
+
+  async getStationShiftHistory(stationId: string, limit = 50): Promise<StationShift[]> {
+    const { data, error } = await supabase.rpc('get_station_shift_history', { p_station_id: stationId, p_limit: limit });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapStationShift(row));
+  },
+
+  async saveStationShift(input: StationShiftScheduleInput): Promise<StationShift> {
+    const { data, error } = await supabase.rpc('save_station_shift', {
+      p_id: input.id ?? null,
+      p_station_id: input.stationId,
+      p_shift_date: input.shiftDate,
+      p_shift_name: input.shiftName,
+      p_scheduled_start: input.scheduledStart,
+      p_scheduled_end: input.scheduledEnd,
+    });
+    if (error) throw error;
+    return mapStationShift(data as unknown as Record<string, unknown>);
+  },
+
+  async cancelStationShift(shiftId: string): Promise<StationShift> {
+    const { data, error } = await supabase.rpc('cancel_station_shift', { p_shift_id: shiftId });
+    if (error) throw error;
+    return mapStationShift(data as unknown as Record<string, unknown>);
+  },
+
+  async saveStationShiftRoster(shiftId: string, assignments: ShiftRosterAssignmentInput[]): Promise<ShiftRosterAssignment[]> {
+    const { data, error } = await supabase.rpc('save_station_shift_roster', {
+      p_shift_id: shiftId,
+      p_assignments: assignments.map((assignment) => ({ user_id: assignment.userId, duty_role: assignment.dutyRole })),
+    });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapShiftRosterAssignment(row));
+  },
+
+  async getStationShiftSchedule(stationId: string, from: string, to: string): Promise<StationShift[]> {
+    const { data, error } = await supabase.rpc('get_station_shift_schedule', { p_station_id: stationId, p_from: from, p_to: to });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapStationShift(row));
+  },
+
+  async getNextStationShift(stationId: string): Promise<StationShift | null> {
+    const { data, error } = await supabase.rpc('get_next_station_shift', { p_station_id: stationId });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ? mapStationShift(row as Record<string, unknown>) : null;
+  },
+
+  async getShiftRoster(shiftId: string): Promise<ShiftRosterAssignment[]> {
+    const { data, error } = await supabase.rpc('get_shift_roster', { p_shift_id: shiftId });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapShiftRosterAssignment(row));
   },
 
 

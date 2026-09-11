@@ -2,10 +2,12 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import type { User } from '@supabase/supabase-js';
+import { Turnstile, type TurnstileInstance } from '@marsidev/react-turnstile';
 import {
   Bell,
   CheckCircle2,
@@ -27,6 +29,7 @@ import {
 } from '@/services/api';
 import { supabase } from '@/services/supabase';
 import {
+  isAuthCaptchaError,
   isAuthConnectivityError,
   isAuthRateLimitError,
   isInvalidCredentialsError,
@@ -99,13 +102,24 @@ export function MyProfilePage({
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [savingPassword, setSavingPassword] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaIssue, setCaptchaIssue] = useState(false);
 
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [deviceBusyId, setDeviceBusyId] = useState<string | null>(null);
+  const turnstileSiteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined)?.trim();
+  const turnstileEnabled = Boolean(turnstileSiteKey);
+
+  const resetCaptcha = useCallback(() => {
+    setCaptchaToken(null);
+    setCaptchaIssue(false);
+    turnstileRef.current?.reset();
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -219,17 +233,25 @@ export function MyProfilePage({
       return;
     }
 
+    if (turnstileEnabled && !captchaToken) {
+      setPasswordError('Please complete the security verification and try again.');
+      return;
+    }
+
     setSavingPassword(true);
 
     try {
       const verify = await supabase.auth.signInWithPassword({
         email: user.email,
         password: currentPassword,
+        ...(captchaToken ? { options: { captchaToken } } : {}),
       });
 
       if (verify.error) {
         if (isAuthRateLimitError(verify.error)) {
           setPasswordError('Too many verification attempts. Please wait a while and try again.');
+        } else if (isAuthCaptchaError(verify.error)) {
+          setPasswordError('Please complete the security verification and try again.');
         } else if (isInvalidCredentialsError(verify.error)) {
           setPasswordError('Current password is incorrect.');
         } else if (isAuthConnectivityError(verify.error)) {
@@ -257,6 +279,7 @@ export function MyProfilePage({
     } catch {
       setPasswordError('We could not change your password right now. Please try again.');
     } finally {
+      if (turnstileEnabled) resetCaptcha();
       setSavingPassword(false);
     }
   };
@@ -506,6 +529,31 @@ export function MyProfilePage({
                     autoComplete="new-password"
                     required
                   />
+
+                  {turnstileEnabled && (
+                    <div className="flex justify-center" aria-live="polite">
+                      <Turnstile
+                        ref={turnstileRef}
+                        siteKey={turnstileSiteKey!}
+                        options={{ size: 'flexible', theme: 'light' }}
+                        onSuccess={(token) => {
+                          setCaptchaToken(token);
+                          setCaptchaIssue(false);
+                        }}
+                        onExpire={() => setCaptchaToken(null)}
+                        onError={() => {
+                          setCaptchaToken(null);
+                          setCaptchaIssue(true);
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {turnstileEnabled && captchaIssue && (
+                    <p role="status" className="text-center text-sm text-slate-600">
+                      Please complete the security verification and try again.
+                    </p>
+                  )}
 
                   {passwordError && (
                     <ErrorText>{passwordError}</ErrorText>

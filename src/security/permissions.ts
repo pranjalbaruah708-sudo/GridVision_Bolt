@@ -76,6 +76,10 @@ export function canAccessRoute(role: AppRole | null | undefined, route: Pick<Rou
     return hasCapability(role, 'view_organisation_structure');
   }
 
+  if (route.tab === 'more' && route.sub === 'shift-schedule') {
+    return hasCapability(role, 'view_administration');
+  }
+
   if (route.tab === 'more' && route.sub === 'network-master-data') {
     return hasCapability(role, 'manage_scoped_feeders') || hasCapability(role, 'manage_all_feeders');
   }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 
 import { AppProvider } from '@/context/AppContext';
 import { useRouter, type Route } from '@/hooks/useRouter';
@@ -53,8 +53,13 @@ import { UsersAccessPage } from '@/pages/UsersAccessPage';
 import { SystemConfigurationPage } from '@/pages/SystemConfigurationPage';
 import { AuditActivityPage } from '@/pages/AuditActivityPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { CurrentShiftPage } from '@/pages/CurrentShiftPage';
+import { ShiftSchedulePage } from '@/pages/ShiftSchedulePage';
 
 import { SignInPage } from '@/pages/SignInPage';
+const DevShiftTestTokenPage = import.meta.env.DEV
+  ? lazy(() => import('@/pages/dev/ShiftTestTokenPage').then((module) => ({ default: module.ShiftTestTokenPage })))
+  : null;
 import { SetPasswordPage } from '@/pages/SetPasswordPage';
 import { ModuleSelectionReplicaPage } from '@/pages/ModuleSelectionReplicaPage';
 
@@ -553,6 +558,14 @@ function Shell() {
     return renderRoutedPage(<MoreRouteShell title={moreRouteShellTitle} onBack={returnToMore} />, 'more');
   }
 
+  if (route.tab === 'more' && route.sub === 'current-shift') {
+    return renderRoutedPage(<CurrentShiftPage onBack={returnToMore} />, 'more');
+  }
+
+  if (route.tab === 'more' && route.sub === 'shift-schedule') {
+    return renderRoutedPage(<ShiftSchedulePage role={role} onBack={returnToMore} />, 'more');
+  }
+
   if (route.tab === 'more' && route.sub === 'profile') {
     return renderRoutedPage(<MyProfilePage user={auth.user!} role={role} onBack={returnToMore} />, 'more');
   }
@@ -778,6 +791,13 @@ function Shell() {
 
 export default function App() {
   const [showExitConfirmation, setShowExitConfirmation] = useState(false);
+
+  const showShiftTokenHelper = import.meta.env.DEV
+    && new URLSearchParams(window.location.search).get('shift-token-helper') === '1';
+
+  if (showShiftTokenHelper && DevShiftTestTokenPage) {
+    return <Suspense fallback={null}><DevShiftTestTokenPage /></Suspense>;
+  }
 
   useEffect(() => {
     if (!isAndroidApp()) return;

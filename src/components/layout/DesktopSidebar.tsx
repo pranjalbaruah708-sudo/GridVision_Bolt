@@ -1,4 +1,4 @@
-import { BarChart2, Bell, ChevronRight, ClipboardPenLine, FileText, Home, MoreHorizontal, Settings, SlidersHorizontal } from 'lucide-react';
+import { BarChart2, Bell, ChevronRight, ClipboardPenLine, Clock3, FileText, Home, MoreHorizontal, Settings, SlidersHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useState, type FocusEvent } from 'react';
 import { Logo } from '@/components/Logo';
@@ -37,11 +37,11 @@ function SidebarGroup({ label, icon: Icon, active, onClick, items, route, onNavi
 export function DesktopSidebar({ route, identity, selectedModule, onNavigate, onOpenProfile, onOpenModuleSelection, onSelectModule }: Props) {
   const analytics: SubmenuItem[] = [{ label: 'Load/Demand Analysis', route: { tab: 'analytics', sub: 'load-demand' } }, { label: 'Interruption Analysis', route: { tab: 'analytics', sub: 'interruptions' } }, { label: 'Indices', route: { tab: 'analytics', sub: 'indices' } }];
   const alerts: SubmenuItem[] = ['all', 'critical', 'warning', 'info'].map((sub) => ({ label: sub === 'all' ? 'All' : sub[0].toUpperCase() + sub.slice(1), route: { tab: 'alerts', sub } }));
-  const operator: SubmenuItem[] = [{ label: 'Parameter Entry', route: { tab: 'more', sub: 'operator-entry' } }, { label: 'Interruption Entry', route: { tab: 'more', sub: 'interruption-entry' } }];
+  const operator: SubmenuItem[] = [{ label: 'Current Shift', route: { tab: 'more', sub: 'current-shift' } }, ...(hasCapability(identity.role, 'create_parameter_entry') ? [{ label: 'Parameter Entry', route: { tab: 'more', sub: 'operator-entry' } }, { label: 'Interruption Entry', route: { tab: 'more', sub: 'interruption-entry' } }] as SubmenuItem[] : [])];
   const reports: SubmenuItem[] = getAvailableReportNavigation(identity.role).map((item) => ({ label: item.label, route: { tab: 'reports', sub: item.sub } }));
   const more: SubmenuItem[] = getAvailableMoreNavigation(identity.role).map((item) => ({ label: item.label, route: { tab: 'more', sub: item.id } }));
   const modules: SubmenuItem[] = [{ label: 'Digital Log Books', onSelect: () => onSelectModule('manual'), badge: selectedModule === 'manual' ? 'Current' : undefined }, { label: 'SCADA Integration', disabled: true, badge: 'Coming Soon' }, { label: 'Shutdown Management', disabled: true, badge: 'Coming Soon' }];
-  const operatorActive = route.tab === 'more' && (route.sub === 'operator-entry' || route.sub === 'interruption-entry');
+  const operatorActive = route.tab === 'more' && (route.sub === 'current-shift' || route.sub === 'operator-entry' || route.sub === 'interruption-entry');
   const groupProps = { route, onNavigate };
 
   return <aside className="fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-blue-900/70 bg-gradient-to-b from-[#062E61] via-[#052957] to-[#032348] text-white shadow-xl">
@@ -50,7 +50,7 @@ export function DesktopSidebar({ route, identity, selectedModule, onNavigate, on
       <button type="button" onClick={() => onNavigate({ tab: 'dashboard' })} aria-current={route.tab === 'dashboard' ? 'page' : undefined} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition-colors ${route.tab === 'dashboard' ? 'bg-blue-600/70 text-white shadow-sm ring-1 ring-blue-300/20' : 'text-blue-100 hover:bg-white/10 hover:text-white'}`}><Home className="h-5 w-5" /><span>Dashboard</span></button>
       <SidebarGroup label="Analytics" icon={BarChart2} active={route.tab === 'analytics'} onClick={() => onNavigate({ tab: 'analytics', sub: 'load-demand' })} items={analytics} {...groupProps} />
       <SidebarGroup label="Alerts" icon={Bell} active={route.tab === 'alerts'} onClick={() => onNavigate({ tab: 'alerts', sub: 'all' })} items={alerts} {...groupProps} />
-      {hasCapability(identity.role, 'create_parameter_entry') && <SidebarGroup label="Operator Entry" icon={ClipboardPenLine} active={operatorActive} onClick={() => onNavigate({ tab: 'more', sub: 'operator-entry' })} items={operator} {...groupProps} />}
+      <SidebarGroup label="Operations" icon={Clock3} active={operatorActive} onClick={() => onNavigate({ tab: 'more', sub: 'current-shift' })} items={operator} {...groupProps} />
       <SidebarGroup label="Reports" icon={FileText} active={route.tab === 'reports'} onClick={() => onNavigate({ tab: 'reports' })} items={reports} {...groupProps} />
       <button type="button" onClick={() => onNavigate({ tab: 'more', sub: 'settings' })} aria-current={route.tab === 'more' && route.sub === 'settings' ? 'page' : undefined} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition-colors ${route.tab === 'more' && route.sub === 'settings' ? 'bg-blue-600/70 text-white shadow-sm ring-1 ring-blue-300/20' : 'text-blue-100 hover:bg-white/10 hover:text-white'}`}><Settings className="h-5 w-5 shrink-0" /><span>Settings</span></button>
       <SidebarGroup label="More" icon={MoreHorizontal} active={route.tab === 'more' && !operatorActive && route.sub !== 'settings'} onClick={() => onNavigate({ tab: 'more' })} items={more} {...groupProps} />
