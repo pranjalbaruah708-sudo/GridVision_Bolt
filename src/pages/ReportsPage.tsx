@@ -40,7 +40,10 @@ export type ReportType =
   | 'feeder-performance'
   | 'executive-summary'
   | 'operator-activity'
-  | 'notification-delivery';
+  | 'notification-delivery'
+  | 'shift-attendance'
+  | 'shift-handover'
+  | 'shift-compliance';
 
 type ReportGroup =
   | 'Quick Reports'
@@ -56,6 +59,7 @@ type ReportDefinition = {
   icon: LucideIcon;
   tone: string;
   adminOnly?: boolean;
+  supervisorOnly?: boolean;
   implemented?: boolean;
 };
 
@@ -113,6 +117,36 @@ export const REPORT_DEFINITIONS: ReportDefinition[] = [
     implemented: true,
   },
   {
+    type: 'shift-attendance',
+    group: 'Operational Reports',
+    title: 'Shift Attendance',
+    description: 'Compare planned roster and actual duty participation.',
+    icon: UsersRound,
+    tone: 'bg-emerald-50 text-emerald-700',
+    supervisorOnly: true,
+    implemented: true,
+  },
+  {
+    type: 'shift-handover',
+    group: 'Operational Reports',
+    title: 'Shift Handover',
+    description: 'Review submitted and accepted shift handovers.',
+    icon: ClipboardCheck,
+    tone: 'bg-blue-50 text-blue-700',
+    supervisorOnly: true,
+    implemented: true,
+  },
+  {
+    type: 'shift-compliance',
+    group: 'Operational Reports',
+    title: 'Shift Compliance',
+    description: 'Review explainable operational shift exceptions.',
+    icon: ShieldCheck,
+    tone: 'bg-amber-50 text-amber-700',
+    supervisorOnly: true,
+    implemented: true,
+  },
+  {
     type: 'station-performance',
     group: 'Performance Reports',
     title: 'Station Performance',
@@ -166,11 +200,15 @@ const REPORT_ROUTE_SUB: Record<ReportType, string> = {
   'data-completeness': 'data-completeness-report', 'parameter-exceptions': 'parameter-exception-report',
   'station-performance': 'station-performance-report', 'feeder-performance': 'feeder-performance-report',
   'executive-summary': 'executive-summary-report', 'operator-activity': 'operator-activity-report',
-  'notification-delivery': 'notification-delivery-report',
+  'notification-delivery': 'notification-delivery-report', 'shift-attendance': 'shift-attendance-report',
+  'shift-handover': 'shift-handover-report', 'shift-compliance': 'shift-compliance-report',
 };
 
 export function getAvailableReportNavigation(role: AppRole) {
-  return REPORT_DEFINITIONS.filter((report) => !report.adminOnly || hasCapability(role, 'view_all_audit')).map((report) => ({ label: report.title, sub: REPORT_ROUTE_SUB[report.type] }));
+  return REPORT_DEFINITIONS.filter((report) =>
+    (!report.adminOnly || hasCapability(role, 'view_all_audit'))
+    && (!report.supervisorOnly || hasCapability(role, 'view_administration')),
+  ).map((report) => ({ label: report.title, sub: REPORT_ROUTE_SUB[report.type] }));
 }
 
 type ReportsPageProps = {
@@ -207,6 +245,7 @@ export function ReportsPage({
     const normalizedSearch = search.trim().toLowerCase();
     const visible = REPORT_DEFINITIONS.filter((report) =>
       (!report.adminOnly || hasCapability(role, 'view_all_audit')) &&
+      (!report.supervisorOnly || hasCapability(role, 'view_administration')) &&
       (!normalizedSearch || report.title.toLowerCase().includes(normalizedSearch))
     );
 

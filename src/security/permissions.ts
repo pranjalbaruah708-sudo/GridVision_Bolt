@@ -60,7 +60,7 @@ export function getRoleLabel(role: AppRole | null | undefined): string {
 export function canAccessRoute(role: AppRole | null | undefined, route: Pick<Route, 'tab' | 'sub'>): boolean {
   if (!role) return false;
 
-  if (route.tab === 'more' && route.sub === 'operator-entry') {
+  if (route.tab === 'more' && (route.sub === 'operator-entry' || route.sub === 'station-condition')) {
     return hasCapability(role, 'create_parameter_entry');
   }
 
@@ -77,6 +77,14 @@ export function canAccessRoute(role: AppRole | null | undefined, route: Pick<Rou
   }
 
   if (route.tab === 'more' && route.sub === 'shift-schedule') {
+    return hasCapability(role, 'view_administration');
+  }
+
+  if (route.tab === 'more' && (route.sub === 'shift-operations' || route.sub === 'shift-history')) {
+    return hasCapability(role, 'view_administration');
+  }
+
+  if (route.tab === 'reports' && ['shift-attendance-report', 'shift-handover-report', 'shift-compliance-report'].includes(route.sub ?? '')) {
     return hasCapability(role, 'view_administration');
   }
 

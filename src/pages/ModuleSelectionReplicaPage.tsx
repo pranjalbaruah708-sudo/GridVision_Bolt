@@ -21,12 +21,20 @@ interface ModuleSelectionReplicaPageProps {
   onLogout?: () => Promise<void>;
 }
 
-type ModuleDefinition = { id: GridVisionModule; title: string; subtitle: string; icon: typeof BookOpen; accent: 'blue' | 'emerald' | 'amber'; enabled: boolean; features: string[] };
+type ModuleFeature = string | { title: string; description: string };
+type ModuleDefinition = { id: GridVisionModule; title: string; subtitle: string; icon: typeof BookOpen; accent: 'blue' | 'emerald' | 'amber'; enabled: boolean; features: ModuleFeature[] };
 
 const MODULES: ModuleDefinition[] = [
-  { id: 'manual', title: 'Digital Log Books', subtitle: 'Manual substation operations', icon: BookOpen, accent: 'blue', enabled: true, features: ['Digital operational log books','Interruption & event management','Real-time alerts & analysis','Offline operations with auto-sync','Audit-ready reports & insights'] },
+  { id: 'manual', title: 'Station Management System', subtitle: 'Complete digital workspace for station operations', icon: BookOpen, accent: 'blue', enabled: true, features: [
+    { title: 'Operational Logbook', description: 'Parameter readings and interruption records' },
+    { title: 'Shift Management', description: 'Scheduling, roster, duty and attendance' },
+    { title: 'Digital Handover', description: 'Shift handover, review and acceptance' },
+    { title: 'Alerts & Analysis', description: 'Operational alerts, trends and performance analysis' },
+    { title: 'Reports & Compliance', description: 'Logbooks, shift history and compliance reporting' },
+    { title: 'Offline Operations', description: 'Continue operational entries offline with automatic sync' },
+  ] },
   { id: 'scada', title: 'SCADA Integration', subtitle: 'Live monitoring & control', icon: Monitor, accent: 'emerald', enabled: false, features: ['Real-time monitoring', 'Remote operations', 'Alarms & events', 'Data visualization'] },
-  { id: 'shutdown', title: 'Shutdown Management', subtitle: 'Plan, approve & track shutdowns', icon: CalendarClock, accent: 'amber', enabled: false, features: ['Shutdown planning', 'Approvals workflow', 'Progress tracking', 'Compliance reports'] },
+  { id: 'shutdown', title: 'Shutdown Management', subtitle: 'Plan, approve & track shutdowns', icon: CalendarClock, accent: 'amber', enabled: true, features: ['Dashboard', 'My requests', 'Initiate & approve requests', 'Reports'] },
 ];
 
 const MODULE_STYLES = {
@@ -125,7 +133,7 @@ export function ModuleSelectionReplicaPage({ username, role, avatarUrl, siteCont
               {module.enabled && <span className="absolute right-0 top-0 grid h-8 w-8 place-items-center rounded-bl-2xl rounded-tr-xl bg-blue-600 text-white">★</span>}
               <span className={`row-span-2 grid h-16 w-16 place-items-center rounded-2xl shadow-lg lg:h-20 lg:w-20 ${styles.icon}`}><Icon className={`h-9 w-9 lg:h-11 lg:w-11 ${module.enabled ? '' : `${showingUnavailable ? 'hidden' : ''} lg:group-hover:hidden`}`} strokeWidth={2.1} />{!module.enabled && <Ban className={`${showingUnavailable ? 'block' : 'hidden'} h-9 w-9 lg:h-11 lg:w-11 lg:group-hover:block`} strokeWidth={2.1} />}</span>
               <div className="min-w-0 lg:mt-5 lg:text-center"><h3 className={`text-base font-bold lg:text-xl ${styles.title}`}>{module.title}</h3><p className="mt-0.5 text-xs font-medium text-slate-500 lg:text-sm">{module.subtitle}</p></div>
-              <ul className={`${module.enabled ? 'mt-2 grid' : 'hidden'} space-y-1.5 lg:mt-6 lg:block lg:w-full lg:flex-1 lg:space-y-3`}>{module.features.map((feature) => <li key={feature} className="flex items-center gap-2 text-xs text-slate-700 lg:text-sm"><span className={`grid h-4 w-4 shrink-0 place-items-center rounded-full lg:h-5 lg:w-5 ${styles.check}`}><Check className="h-2.5 w-2.5 lg:h-3 lg:w-3" strokeWidth={3} /></span>{feature}</li>)}</ul>
+              <ul className={`${module.enabled ? 'mt-2 grid' : 'hidden'} space-y-1.5 lg:mt-6 lg:block lg:w-full lg:flex-1 lg:space-y-3`}>{module.features.map((feature) => <li key={typeof feature === 'string' ? feature : feature.title} className="flex items-start gap-2 text-xs text-slate-700 lg:text-sm"><span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full lg:h-5 lg:w-5 ${styles.check}`}><Check className="h-2.5 w-2.5 lg:h-3 lg:w-3" strokeWidth={3} /></span>{typeof feature === 'string' ? <span>{feature}</span> : <span className="min-w-0"><span className="block font-bold text-slate-800">{feature.title}</span><span className="block text-[10px] leading-3 text-slate-500 lg:text-xs lg:leading-4">{feature.description}</span></span>}</li>)}</ul>
               <button type="button" disabled={!module.enabled} aria-disabled={!module.enabled} onClick={() => onSelectModule(module.id)} className={`col-span-2 mt-3 min-h-9 w-full rounded-md px-4 text-xs font-bold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:mt-6 lg:min-h-11 lg:text-sm ${module.enabled ? 'bg-blue-600 text-white hover:bg-blue-700 focus-visible:outline-blue-600 active:scale-[0.99]' : `border bg-white ${module.accent === 'emerald' ? 'border-emerald-400 text-emerald-600' : 'border-orange-400 text-orange-600'}`}`}>{module.enabled ? <span className="flex items-center justify-center gap-2">Open Module<ChevronRight className="h-4 w-4" /></span> : <span className="flex items-center justify-center gap-2">{showingUnavailable ? 'Unavailable — Coming Soon' : 'Coming Soon'}<Lock className="h-3.5 w-3.5" /></span>}</button>
             </article>;
           })}

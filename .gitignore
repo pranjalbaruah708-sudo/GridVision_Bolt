@@ -27,3 +27,6 @@ dist-ssr
 
 coverage/
 *.tsbuildinfo
+
+# Local database safety snapshots; never run these as migrations.
+db-backups/

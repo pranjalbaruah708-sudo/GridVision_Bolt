@@ -5,7 +5,7 @@ import { api, type AdminFeederDetail, type AdminFeederRow, type AdminStationDeta
 import { hasCapability, type AppRole } from '@/security/permissions';
 import type { MoreDestination } from '@/pages/MorePage';
 
-const PAGE_CONFIG: Record<Exclude<MoreDestination, 'profile' | 'current-shift' | 'shift-schedule' | 'operator-entry' | 'interruption-entry' | 'settings' | 'help-about'>, { title: string; subtitle: string; icon: typeof Building2 }> = {
+const PAGE_CONFIG: Record<Exclude<MoreDestination, 'profile' | 'current-shift' | 'shift-handover' | 'shift-schedule' | 'shift-operations' | 'shift-history' | 'operator-entry' | 'interruption-entry' | 'station-condition' | 'operational-timeline' | 'settings' | 'help-about'>, { title: string; subtitle: string; icon: typeof Building2 }> = {
   'organisation-structure': { title: 'Organisation Structure', subtitle: 'Office hierarchy and station associations', icon: Building2 },
   'network-master-data': { title: 'Network Master Data', subtitle: 'Stations and feeder configuration', icon: Database },
   'users-access': { title: 'Users & Access', subtitle: 'Authorised user administration', icon: UsersRound },

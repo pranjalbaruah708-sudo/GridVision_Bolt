@@ -22,6 +22,7 @@ export type OfflineEntryMode = 'ONLINE' | 'OFFLINE';
 export type SyncFailureCategory = 'TRANSIENT' | 'AUTHORIZATION' | 'CONFLICT' | 'VALIDATION' | 'DEPENDENCY' | 'UNKNOWN';
 export type QueuedSyncState = 'PENDING' | 'NEEDS_ATTENTION';
 export type OfflineOperationType =
+  | 'ADD_STATION_CONDITION'
   | 'ADD_LOG_ENTRY'
   | 'UPDATE_LOG_ENTRY'
   | 'ADD_INTERRUPTION'

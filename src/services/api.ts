@@ -56,6 +56,8 @@ import type {
 import type { AppRole } from '@/security/permissions';
 import { recordStorageFailure, recordSyncCompleted, recordSyncStarted } from './diagnostics';
 import { isQueueSyncAuthorized } from './syncAuthorization';
+import { stationConditionCreateArgs } from './operationalApi';
+import { conditionInput } from './stationConditionOffline';
 export type { AppRole } from '@/security/permissions';
 
 export type MyProfile = {
@@ -192,6 +194,42 @@ export type ShiftHandoverDraftItemInput = {
   source_id?: string | null;
   description?: string | null;
   priority?: ShiftHandoverItem['priority'];
+};
+
+export type ShiftComplianceRosterMember = {
+  user_id: string;
+  full_name: string;
+  duty_role: ShiftRole;
+  created_at: string;
+};
+
+export type ShiftComplianceDutyParticipant = {
+  id: string;
+  user_id: string;
+  full_name: string;
+  shift_role: ShiftRole;
+  started_at: string;
+  ended_at: string | null;
+  status: ShiftDutyStatus;
+};
+
+export type ShiftComplianceHandover = {
+  id: string;
+  status: ShiftHandoverStatus;
+  incoming_shift_id: string;
+  submitted_by_user_id: string | null;
+  submitted_by_name: string | null;
+  submitted_at: string | null;
+  accepted_by_user_id: string | null;
+  accepted_by_name: string | null;
+  accepted_at: string | null;
+  outgoing_notes: string | null;
+};
+
+export type ShiftComplianceRow = Omit<StationShift, 'created_at' | 'updated_at'> & {
+  roster: ShiftComplianceRosterMember[];
+  duty_sessions: ShiftComplianceDutyParticipant[];
+  handover: ShiftComplianceHandover | null;
 };
 
 export type OrgUnitType = { unit_type: string; hierarchy_rank: number };
@@ -978,6 +1016,40 @@ function mapShiftHandoverItem(row: Record<string, unknown>): ShiftHandoverItem {
   };
 }
 
+function rows(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    : [];
+}
+
+function mapShiftComplianceRow(row: Record<string, unknown>): ShiftComplianceRow {
+  const handover = row.handover && typeof row.handover === 'object' && !Array.isArray(row.handover)
+    ? row.handover as Record<string, unknown>
+    : null;
+  return {
+    id: String(row.id), station_id: String(row.station_id), shift_date: String(row.shift_date),
+    shift_name: String(row.shift_name), scheduled_start: String(row.scheduled_start), scheduled_end: String(row.scheduled_end),
+    status: String(row.status) as StationShiftStatus, created_by: null,
+    roster: rows(row.roster).map((item) => ({
+      user_id: String(item.user_id), full_name: String(item.full_name), duty_role: String(item.duty_role) as ShiftRole, created_at: String(item.created_at),
+    })),
+    duty_sessions: rows(row.duty_sessions).map((item) => ({
+      id: String(item.id), user_id: String(item.user_id), full_name: String(item.full_name), shift_role: String(item.shift_role) as ShiftRole,
+      started_at: String(item.started_at), ended_at: item.ended_at == null ? null : String(item.ended_at), status: String(item.status) as ShiftDutyStatus,
+    })),
+    handover: handover ? {
+      id: String(handover.id), status: String(handover.status) as ShiftHandoverStatus, incoming_shift_id: String(handover.incoming_shift_id),
+      submitted_by_user_id: handover.submitted_by_user_id == null ? null : String(handover.submitted_by_user_id),
+      submitted_by_name: handover.submitted_by_name == null ? null : String(handover.submitted_by_name),
+      submitted_at: handover.submitted_at == null ? null : String(handover.submitted_at),
+      accepted_by_user_id: handover.accepted_by_user_id == null ? null : String(handover.accepted_by_user_id),
+      accepted_by_name: handover.accepted_by_name == null ? null : String(handover.accepted_by_name),
+      accepted_at: handover.accepted_at == null ? null : String(handover.accepted_at),
+      outgoing_notes: handover.outgoing_notes == null ? null : String(handover.outgoing_notes),
+    } : null,
+  };
+}
+
 export const api = {
 
 
@@ -1088,6 +1160,12 @@ export const api = {
     return row ? mapShiftHandover(row as Record<string, unknown>) : null;
   },
 
+  async getShiftHandover(handoverId: string): Promise<ShiftHandover | null> {
+    const { data, error } = await supabase.from('shift_handovers').select('*').eq('id', handoverId).maybeSingle();
+    if (error) throw error;
+    return data ? mapShiftHandover(data as Record<string, unknown>) : null;
+  },
+
   async getShiftHandoverItems(handoverId: string): Promise<ShiftHandoverItem[]> {
     const { data, error } = await supabase.from('shift_handover_items').select('*').eq('handover_id', handoverId).order('created_at');
     if (error) throw error;
@@ -1104,6 +1182,17 @@ export const api = {
     const { data, error } = await supabase.rpc('get_station_shift_history', { p_station_id: stationId, p_limit: limit });
     if (error) throw error;
     return (data ?? []).map((row: Record<string, unknown>) => mapStationShift(row));
+  },
+
+  async getStationShiftCompliance(stationId: string, from: string, to: string, limit = 100): Promise<ShiftComplianceRow[]> {
+    const { data, error } = await supabase.rpc('get_station_shift_compliance', {
+      p_station_id: stationId,
+      p_from: from,
+      p_to: to,
+      p_limit: limit,
+    });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => mapShiftComplianceRow(row));
   },
 
   async saveStationShift(input: StationShiftScheduleInput): Promise<StationShift> {
@@ -2810,6 +2899,25 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     );
   },
 
+  async getOpenInterruptionsForStation(stationId: string, limit = 100): Promise<Interruption[]> {
+    const query =
+      `station_id=eq.${encodeURIComponent(stationId)}` +
+      '&current_status=eq.OPEN' +
+      '&order=interruption_start.desc' +
+      `&limit=${Math.max(1, Math.min(limit, 100))}`;
+    return restGet<Interruption>('interruptions', query, `interruptions:${stationId}:open`);
+  },
+
+  async getInterruptionsForPeriod(stationId: string, startIso: string, endIso: string, limit = 100): Promise<Interruption[]> {
+    const query =
+      `station_id=eq.${encodeURIComponent(stationId)}` +
+      `&interruption_start=gte.${encodeURIComponent(startIso)}` +
+      `&interruption_start=lt.${encodeURIComponent(endIso)}` +
+      '&order=interruption_start.desc' +
+      `&limit=${Math.max(1, Math.min(limit, 100))}`;
+    return restGet<Interruption>('interruptions', query, `interruptions:${stationId}:${startIso}:${endIso}`);
+  },
+
   async updateInterruptionEtr(id: string, etr: string | null): Promise<void> {
     const ownerUserId = await getQueueOwnerUserId();
     if (id.startsWith('local:int:')) {
@@ -3020,6 +3128,16 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     );
   },
 
+  async getLogBookForPeriod(stationId: string, startIso: string, endIso: string, limit = 200): Promise<LogBookEntry[]> {
+    const query =
+      `station_id=eq.${encodeURIComponent(stationId)}` +
+      `&actual_event_time=gte.${encodeURIComponent(startIso)}` +
+      `&actual_event_time=lt.${encodeURIComponent(endIso)}` +
+      '&order=actual_event_time.desc' +
+      `&limit=${Math.max(1, Math.min(limit, 200))}`;
+    return restGet<LogBookEntry>('log_book_entries', query, `logbook:${stationId}:${startIso}:${endIso}`);
+  },
+
   async getParameterAlerts(
     stationId?: string,
     startIso?: string,
@@ -3064,6 +3182,30 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
         source_synced_at: row.source_synced_at,
         is_current: row.is_current,
         notification_suppressed: row.notification_suppressed,
+      };
+    });
+  },
+
+  async getCurrentParameterAlerts(stationId: string, limit = 100): Promise<ParameterAlert[]> {
+    const { data, error } = await supabase
+      .from('parameter_alerts')
+      .select('id,station_id,feeder_id,parameter_code,actual_value,min_value,max_value,breach_type,triggered_at,notification_class,source_entry_mode,source_recorded_at,source_synced_at,is_current,notification_suppressed,feeders(name)')
+      .eq('station_id', stationId)
+      .eq('is_current', true)
+      .order('triggered_at', { ascending: false })
+      .limit(Math.max(1, Math.min(limit, 100)));
+    if (error) throw error;
+    return (data ?? []).map((row) => {
+      const feeder = row.feeders as { name?: string | null } | null;
+      return {
+        id: row.id, station_id: row.station_id, feeder_id: row.feeder_id, feeder_name: feeder?.name ?? null,
+        parameter_code: row.parameter_code, actual_value: Number(row.actual_value),
+        min_value: row.min_value === null ? null : Number(row.min_value), max_value: row.max_value === null ? null : Number(row.max_value),
+        breach_type: row.breach_type as 'BELOW_MIN' | 'ABOVE_MAX', triggered_at: row.triggered_at,
+        notification_class: row.notification_class as NotificationClass | null,
+        source_entry_mode: row.source_entry_mode as OperationalEntryMode | null,
+        source_recorded_at: row.source_recorded_at, source_synced_at: row.source_synced_at,
+        is_current: row.is_current, notification_suppressed: row.notification_suppressed,
       };
     });
   },
@@ -3133,7 +3275,7 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
   ): Promise<InterruptionReportPage> {
     if (accessibleStationIds.length === 0) return { rows: [], total: 0 };
     let query = supabase
-      .from('interruptions')
+      .from('scoped_interruption_report_entries')
       .select('id,station_id,feeder_id,operator_id,interruption_start,interruption_end,duration_minutes,cause,remarks,current_status,etr,created_at,updated_at', { count: 'exact' })
       .in('station_id', accessibleStationIds)
       .gte('interruption_start', startIso)
@@ -3201,7 +3343,7 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     if (accessibleStationIds.length === 0) return { rows: [], total: 0 };
 
     let query = supabase
-      .from('log_book_entries')
+      .from('scoped_logbook_report_entries')
       .select(
         'id,station_id,feeder_id,operator_id,actual_event_time,mw,mvar,voltage_kv,current_a,power_factor,frequency_hz,transformer_temp_c,oil_level_percent,tap_position,weather,remarks,created_at,updated_at',
         { count: 'exact' }
@@ -3594,6 +3736,30 @@ async function runQueued(
   ownerUserId: string,
   offlineSequenceFinal: boolean,
 ): Promise<{ serverEntityId?: string }> {
+  if (op.operationType === 'ADD_STATION_CONDITION') {
+    const input = conditionInput(op.body);
+    if (!input || op.table !== 'station_conditions' || op.method !== 'POST' || op.ownerUserId !== ownerUserId) {
+      throw new Error('Invalid queued station condition.');
+    }
+    const headers = await getAuthHeaders();
+    if (!(await queueSyncSessionIsCurrent(ownerUserId))) throw new QueuedSyncSessionChangedError();
+    const response = await fetch(`${REST_URL}/rpc/create_station_condition`, {
+      method: 'POST', headers,
+      body: JSON.stringify(stationConditionCreateArgs({ ...input,
+        client_operation_id: op.clientOperationId, entry_mode: op.entryMode,
+        recorded_at: new Date(op.recordedAt).toISOString(),
+      })),
+    });
+    if (!response.ok) throw await readQueuedReplayError(response);
+    const row: unknown = await response.json();
+    if (!row || typeof row !== 'object' || !('id' in row) || typeof row.id !== 'string'
+      || !('recorded_by' in row) || row.recorded_by !== ownerUserId
+      || !('station_id' in row) || row.station_id !== input.station_id
+      || !('client_operation_id' in row) || row.client_operation_id !== op.clientOperationId) {
+      throw new Error('Station condition replay returned no confirmed record.');
+    }
+    return { serverEntityId: row.id };
+  }
   if (op.operationType === 'RESTORE_INTERRUPTION' && !op.filter?.id) {
     throw new QueuedDependencyError();
   }

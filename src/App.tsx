@@ -44,6 +44,8 @@ import { NotificationDeliveryReportPage, OperatorActivityReportPage } from '@/pa
 
 import { OperatorEntryPage } from '@/pages/OperatorEntryPage';
 import { InterruptionEntryPage } from '@/pages/InterruptionEntryPage';
+import { StationConditionPage } from '@/pages/StationConditionPage';
+import { OperationalTimelinePage } from '@/pages/OperationalTimelinePage';
 
 import { MorePage, type MoreDestination } from '@/pages/MorePage';
 import { MoreRouteShell } from '@/pages/MoreRouteShell';
@@ -55,6 +57,8 @@ import { AuditActivityPage } from '@/pages/AuditActivityPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { CurrentShiftPage } from '@/pages/CurrentShiftPage';
 import { ShiftSchedulePage } from '@/pages/ShiftSchedulePage';
+import { ShiftHandoverPage } from '@/pages/ShiftHandoverPage';
+import { ShiftOperationsPage } from '@/pages/ShiftOperationsPage';
 
 import { SignInPage } from '@/pages/SignInPage';
 const DevShiftTestTokenPage = import.meta.env.DEV
@@ -62,6 +66,10 @@ const DevShiftTestTokenPage = import.meta.env.DEV
   : null;
 import { SetPasswordPage } from '@/pages/SetPasswordPage';
 import { ModuleSelectionReplicaPage } from '@/pages/ModuleSelectionReplicaPage';
+import { ShutdownDashboardPage } from '@/pages/ShutdownDashboardPage';
+import { ShutdownMyRequestsPage } from '@/pages/ShutdownMyRequestsPage';
+import { ShutdownRequestPage } from '@/pages/ShutdownRequestPage';
+import { ShutdownReportsPage } from '@/pages/ShutdownReportsPage';
 
 
 import { Loader2 } from 'lucide-react';
@@ -310,7 +318,7 @@ function Shell() {
   };
 
   const renderRoutedPage = (content: React.ReactNode, active = route.tab) => (
-    <ResponsiveAppShell active={active} onNavigate={(tab) => go({ tab })} identity={shellIdentity} onOpenProfile={() => go({ tab: 'more', sub: 'profile' })} onOpenAlerts={() => go({ tab: 'alerts', sub: 'all' })} onSignOut={handleSignOut} route={route} selectedModule={selectedModule ?? 'manual'} onNavigateRoute={go} onOpenModuleSelection={() => setSelectedModule(null)} onSelectModule={(module) => { if (module === 'manual') { setSelectedModule('manual'); go({ tab: 'dashboard' }); } }}>
+    <ResponsiveAppShell active={active} onNavigate={(tab) => go({ tab })} identity={shellIdentity} onOpenProfile={() => go({ tab: 'more', sub: 'profile' })} onOpenAlerts={() => go({ tab: 'alerts', sub: 'all' })} onSignOut={handleSignOut} route={route} selectedModule={selectedModule ?? 'manual'} onNavigateRoute={go} onOpenModuleSelection={() => setSelectedModule(null)} onSelectModule={(module) => { if (module === 'manual' || module === 'shutdown') { setSelectedModule(module); go({ tab: 'dashboard' }); } }}>
       {content}
     </ResponsiveAppShell>
   );
@@ -449,6 +457,20 @@ function Shell() {
   // SUB PAGES
   // ======================================================
 
+  if (selectedModule === 'shutdown') {
+    if (route.tab === 'dashboard' && route.sub === 'my-requests') {
+      return renderRoutedPage(<ShutdownMyRequestsPage onBack={() => go({ tab: 'dashboard' })} onNewRequest={() => go({ tab: 'dashboard', sub: 'shutdown-request-new' })} onViewRequest={(id) => go({ tab: 'dashboard', sub: `shutdown-request-${id}` })} />, 'dashboard');
+    }
+    if (route.tab === 'dashboard' && route.sub === 'shutdown-reports') {
+      return renderRoutedPage(<ShutdownReportsPage onBack={() => go({ tab: 'dashboard' })} />, 'dashboard');
+    }
+    if (route.tab === 'dashboard' && route.sub?.startsWith('shutdown-request-')) {
+      const requestId = route.sub === 'shutdown-request-new' ? undefined : route.sub.replace('shutdown-request-', '');
+      return renderRoutedPage(<ShutdownRequestPage requestId={requestId} onCancel={() => go({ tab: 'dashboard', sub: 'my-requests' })} onComplete={() => go({ tab: 'dashboard', sub: 'my-requests' })} />, 'dashboard');
+    }
+    return renderRoutedPage(<ShutdownDashboardPage onBack={returnToModuleSelection} onViewRequest={(id) => go({ tab: 'dashboard', sub: `shutdown-request-${id}` })} />, 'dashboard');
+  }
+
 
   // ------------------------------------------------------
   // LOG BOOK REPORT
@@ -509,6 +531,18 @@ function Shell() {
     return renderRoutedPage(<NotificationDeliveryReportPage onBack={returnToReports} />, 'reports');
   }
 
+  if (route.tab === 'reports' && route.sub === 'shift-attendance-report') {
+    return renderRoutedPage(<ShiftOperationsPage view="attendance-report" onBack={returnToReports} />, 'reports');
+  }
+
+  if (route.tab === 'reports' && route.sub === 'shift-handover-report') {
+    return renderRoutedPage(<ShiftOperationsPage view="handover-report" onBack={returnToReports} />, 'reports');
+  }
+
+  if (route.tab === 'reports' && route.sub === 'shift-compliance-report') {
+    return renderRoutedPage(<ShiftOperationsPage view="compliance-report" onBack={returnToReports} />, 'reports');
+  }
+
 
   // ------------------------------------------------------
   // OPERATOR ENTRY
@@ -533,6 +567,13 @@ function Shell() {
     return renderRoutedPage(<InterruptionEntryPage onBack={returnToMore} />, 'more');
   }
 
+  if (route.tab === 'more' && route.sub === 'operational-timeline') {
+    return renderRoutedPage(<OperationalTimelinePage onBack={returnToMore} />, 'more');
+  }
+  if (route.tab === 'more' && route.sub === 'station-condition') {
+    return renderRoutedPage(<StationConditionPage onBack={returnToMore} />, 'more');
+  }
+
 
   // ------------------------------------------------------
   // SETTINGS
@@ -545,8 +586,8 @@ function Shell() {
     return renderRoutedPage(<SettingsPage onBack={returnToMore} onReviewOperation={(operation) => {
       const body = operation.body && typeof operation.body === 'object' && !Array.isArray(operation.body) ? operation.body as Record<string, unknown> : {};
       if (typeof body.station_id === 'string') setActiveStationId(body.station_id);
-      setReviewOperation(operation);
-      go({ tab: 'more', sub: operation.table === 'interruptions' ? 'interruption-entry' : 'operator-entry' });
+      setReviewOperation(operation.table === 'station_conditions' ? null : operation);
+      go({ tab: 'more', sub: operation.table === 'station_conditions' ? 'station-condition' : operation.table === 'interruptions' ? 'interruption-entry' : 'operator-entry' });
     }} />, 'more');
   }
 
@@ -559,11 +600,23 @@ function Shell() {
   }
 
   if (route.tab === 'more' && route.sub === 'current-shift') {
-    return renderRoutedPage(<CurrentShiftPage onBack={returnToMore} />, 'more');
+    return renderRoutedPage(<CurrentShiftPage onBack={returnToMore} onOpenHandover={() => go({ tab: 'more', sub: 'shift-handover' })} />, 'more');
+  }
+
+  if (route.tab === 'more' && route.sub === 'shift-handover') {
+    return renderRoutedPage(<ShiftHandoverPage onBack={() => go({ tab: 'more', sub: 'current-shift' })} />, 'more');
   }
 
   if (route.tab === 'more' && route.sub === 'shift-schedule') {
     return renderRoutedPage(<ShiftSchedulePage role={role} onBack={returnToMore} />, 'more');
+  }
+
+  if (route.tab === 'more' && route.sub === 'shift-operations') {
+    return renderRoutedPage(<ShiftOperationsPage view="overview" onBack={returnToMore} />, 'more');
+  }
+
+  if (route.tab === 'more' && route.sub === 'shift-history') {
+    return renderRoutedPage(<ShiftOperationsPage view="history" onBack={returnToMore} />, 'more');
   }
 
   if (route.tab === 'more' && route.sub === 'profile') {

@@ -21,6 +21,7 @@ type ReportActionsProps<Row> = {
   columns: ReportColumn<Row>[];
   disabled?: boolean;
   primaryPdf?: boolean;
+  showPdfLabel?: boolean;
   totalRows?: number;
   loadAllRows?: () => Promise<Row[]>;
 };
@@ -79,6 +80,7 @@ export function ReportActions<Row>({
   columns,
   disabled = false,
   primaryPdf = false,
+  showPdfLabel = false,
   totalRows = rows.length,
   loadAllRows,
 }: ReportActionsProps<Row>) {
@@ -141,7 +143,7 @@ export function ReportActions<Row>({
 
   return <div className="flex flex-wrap gap-2" data-report-exclude>
     <button type="button" onClick={() => void openPrint()} disabled={unavailable} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"><Printer className="h-4 w-4" />{exporting ? 'Preparing...' : 'Print'}</button>
-    <button type="button" onClick={() => void openPrint()} disabled={unavailable} aria-label={exporting ? 'Preparing complete report' : 'Save report as PDF'} title="Save as PDF" className={`grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${primaryPdf ? 'lg:border-blue-700 lg:bg-blue-700 lg:text-white lg:hover:bg-blue-800' : ''}`}><FileDown className="h-4 w-4" /></button>
+    <button type="button" onClick={() => void openPrint()} disabled={unavailable} aria-label={exporting ? 'Preparing complete report' : 'Save report as PDF'} title="Save as PDF" className={`inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${showPdfLabel ? 'lg:w-9 lg:px-0' : 'w-9 px-0'} ${primaryPdf ? 'lg:border-blue-700 lg:bg-blue-700 lg:text-white lg:hover:bg-blue-800' : ''}`}><FileDown className="h-4 w-4" />{showPdfLabel && <span className="lg:hidden">{exporting ? 'Preparing...' : 'PDF'}</span>}</button>
     <button type="button" onClick={() => void exportCsv()} disabled={unavailable} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />{exporting ? 'Preparing...' : 'CSV'}</button>
   </div>;
 }

@@ -255,7 +255,7 @@ export function SettingsPage({ onBack, onReviewOperation }: { onBack: () => void
 
 function queueOperationLabel(operation: QueuedOp): string {
   const labels: Partial<Record<QueuedOp['operationType'], string>> = {
-    ADD_LOG_ENTRY: 'Parameter entry', UPDATE_LOG_ENTRY: 'Parameter entry update',
+    ADD_LOG_ENTRY: 'Parameter entry', UPDATE_LOG_ENTRY: 'Parameter entry update', ADD_STATION_CONDITION: 'Station condition',
     ADD_INTERRUPTION: 'Interruption trip', RESTORE_INTERRUPTION: 'Interruption restore', UPDATE_INTERRUPTION_ETR: 'Interruption ETR update',
     GENERIC_POST: 'Pending record', GENERIC_PATCH: 'Pending update', GENERIC_DELETE: 'Pending removal',
   };
