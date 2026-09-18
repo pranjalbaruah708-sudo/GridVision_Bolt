@@ -124,6 +124,8 @@ type DailyTrendRow = {
 
 type RankingMetric =
   | "PEAK_MW"
+  | "MIN_VOLTAGE"
+  | "MAX_CURRENT"
   | "MIN_PF"
   | "COMPLETENESS";
 
@@ -290,6 +292,14 @@ const RANKING_OPTIONS: {
   {
     value: "MIN_PF",
     label: "Min PF",
+  },
+  {
+    value: "MIN_VOLTAGE",
+    label: "Min Voltage",
+  },
+  {
+    value: "MAX_CURRENT",
+    label: "Max Current",
   },
   {
     value: "COMPLETENESS",
@@ -2599,13 +2609,17 @@ const loadTrend = useCallback(
         value:
           rankingMetric === "PEAK_MW"
             ? row.peak_mw
+            : rankingMetric === "MIN_VOLTAGE"
+              ? row.minimum_voltage_kv
+              : rankingMetric === "MAX_CURRENT"
+                ? row.maximum_current_a
             : rankingMetric === "MIN_PF"
               ? row.minimum_power_factor
               : row.completeness_percent,
         completeness: row.completeness_percent,
       }))
       .sort((left, right) => {
-        if (rankingMetric === "MIN_PF") {
+        if (rankingMetric === "MIN_PF" || rankingMetric === "MIN_VOLTAGE") {
           return (left.value ?? Infinity) - (right.value ?? Infinity);
         }
 
@@ -3824,6 +3838,7 @@ const loadTrend = useCallback(
                           feederSummary.peak_mw
                         )} MW`
                   }
+                  subtitle={formatTimestamp(feederSummary?.peak_time ?? null)}
                 />
 
                 <MiniMetric
@@ -3832,9 +3847,10 @@ const loadTrend = useCallback(
                     feederSummary?.minimum_voltage_kv == null
                       ? "—"
                       : `${formatNumber(
-                          feederSummary.minimum_voltage_kv
-                        )} kV`
+                        feederSummary.minimum_voltage_kv
+                      )} kV`
                   }
+                  subtitle={formatTimestamp(feederSummary?.minimum_voltage_time ?? null)}
                 />
 
                 <MiniMetric
@@ -3846,6 +3862,7 @@ const loadTrend = useCallback(
                           feederSummary.maximum_current_a
                         )} A`
                   }
+                  subtitle={formatTimestamp(feederSummary?.maximum_current_time ?? null)}
                 />
 
                 <MiniMetric
@@ -3855,8 +3872,9 @@ const loadTrend = useCallback(
                       ? "—"
                       : feederSummary.minimum_power_factor.toFixed(
                           2
-                        )
+                      )
                   }
+                  subtitle={formatTimestamp(feederSummary?.minimum_power_factor_time ?? null)}
                 />
 
                 <MiniMetric
@@ -5803,9 +5821,11 @@ function ParameterHealthDetailsModal({
 function MiniMetric({
   label,
   value,
+  subtitle,
 }: {
   label: string;
   value: string;
+  subtitle?: string;
 }) {
   return (
     <div
@@ -5842,6 +5862,18 @@ function MiniMetric({
       >
         {value}
       </div>
+      {subtitle && (
+        <div
+          style={{
+            marginTop: 4,
+            fontSize: 9,
+            lineHeight: 1.3,
+            color: "#64748B",
+          }}
+        >
+          Recorded: {subtitle}
+        </div>
+      )}
     </div>
   );
 }
@@ -6430,6 +6462,14 @@ function formatRankingValue(
     return value.toFixed(
       2
     );
+  }
+
+  if (metric === "MIN_VOLTAGE") {
+    return `${formatNumber(value)} kV`;
+  }
+
+  if (metric === "MAX_CURRENT") {
+    return `${formatNumber(value)} A`;
   }
 
   return `${value.toFixed(

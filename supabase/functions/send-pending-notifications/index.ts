@@ -248,6 +248,14 @@ Deno.serve(async (req) => {
       supabaseServiceRoleKey,
     );
 
+    // Prepare roster-targeted shift reminders before draining the delivery queue.
+    const { error: shiftReminderError } = await supabaseAdmin.rpc(
+      "prepare_upcoming_shift_duty_notifications",
+    );
+    if (shiftReminderError) {
+      console.error("Upcoming shift reminders could not be prepared:", shiftReminderError.message);
+    }
+
     // ==================================================
     // Optional request body
     //

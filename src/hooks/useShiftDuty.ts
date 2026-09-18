@@ -11,23 +11,25 @@ type ShiftDutyState = {
   plannedRoster: ShiftRosterAssignment[];
   nextShift: StationShift | null;
   pendingIncomingHandover: ShiftHandover | null;
+  loaded: boolean;
   loading: boolean;
   error: string | null;
   mutating: boolean;
 };
 
 const emptyState: ShiftDutyState = {
-  currentShift: null, myDutySession: null, operatorsOnDuty: [], plannedRoster: [], nextShift: null, pendingIncomingHandover: null, loading: false, error: null, mutating: false,
+  currentShift: null, myDutySession: null, operatorsOnDuty: [], plannedRoster: [], nextShift: null, pendingIncomingHandover: null, loaded: false, loading: false, error: null, mutating: false,
 };
 
-export function useShiftDuty() {
+export function useShiftDuty(stationIdOverride?: string | null) {
   const auth = useAuth();
-  const { activeStation, loading: stationsLoading } = useApp();
+  const { activeStation, stations, loading: stationsLoading } = useApp();
   const generation = useRef(0);
   const mutationGeneration = useRef(0);
   const [state, setState] = useState<ShiftDutyState>(emptyState);
   const userId = auth.user?.id ?? null;
-  const stationId = activeStation?.id ?? null;
+  const stationId = stationIdOverride === undefined ? activeStation?.id ?? null : stationIdOverride;
+  const station = stations.find((item) => item.id === stationId) ?? null;
 
   const clear = useCallback(() => {
     generation.current += 1;
@@ -38,7 +40,7 @@ export function useShiftDuty() {
   const refresh = useCallback(async () => {
     const request = ++generation.current;
     if (!userId || !stationId) {
-      setState((current) => ({ ...emptyState, loading: stationsLoading && Boolean(userId) }));
+      setState((current) => ({ ...emptyState, loaded: !stationsLoading, loading: stationsLoading && Boolean(userId) }));
       return;
     }
     setState((current) => ({ ...current, loading: true, error: null }));
@@ -49,7 +51,7 @@ export function useShiftDuty() {
       ]);
       if (request !== generation.current) return;
       if (!currentShift) {
-        setState((current) => ({ ...current, currentShift: null, myDutySession: null, operatorsOnDuty: [], plannedRoster: [], nextShift, pendingIncomingHandover: null, loading: false }));
+        setState((current) => ({ ...current, currentShift: null, myDutySession: null, operatorsOnDuty: [], plannedRoster: [], nextShift, pendingIncomingHandover: null, loaded: true, loading: false }));
         return;
       }
       const [myDutySession, sessions, plannedRoster] = await Promise.all([
@@ -70,12 +72,13 @@ export function useShiftDuty() {
         plannedRoster,
         nextShift,
         pendingIncomingHandover: pendingIncomingHandover?.incoming_shift_id === currentShift.id ? pendingIncomingHandover : null,
+        loaded: true,
         loading: false,
         error: null,
       }));
     } catch {
       if (request !== generation.current) return;
-      setState((current) => ({ ...current, loading: false, error: 'Could not load the current shift. Check your connection and try again.' }));
+      setState((current) => ({ ...current, loaded: false, loading: false, error: 'Could not load the current shift. Check your connection and try again.' }));
     }
   }, [stationId, stationsLoading, userId]);
 
@@ -126,5 +129,5 @@ export function useShiftDuty() {
     }
   }, [refresh, state.myDutySession]);
 
-  return { ...state, station: activeStation, hasStation: Boolean(stationId), refresh, startDuty, endDuty };
+  return { ...state, station, hasStation: Boolean(stationId), refresh, startDuty, endDuty };
 }

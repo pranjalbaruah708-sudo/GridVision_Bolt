@@ -55,10 +55,11 @@ export function getReportPeriodLabel(values: Pick<ReportFilterValues, 'period' |
   return `${values.fromDate} to ${values.toDate}`;
 }
 
-export function validateReportFilters(values: ReportFilterValues, options: { requireStation?: boolean; requireFeeder?: boolean }): string | null {
+export function validateReportFilters(values: ReportFilterValues, options: { requireStation?: boolean; requireFeeder?: boolean; futureOnly?: boolean }): string | null {
   if (!values.fromDate || !values.toDate) return 'Select both From and To dates.';
   if (values.fromDate > values.toDate) return 'From date cannot be after To date.';
-  if (values.toDate > getTodayIstDate()) return 'Future dates cannot be selected.';
+  if (!options.futureOnly && values.toDate > getTodayIstDate()) return 'Future dates cannot be selected.';
+  if (options.futureOnly && values.fromDate < getTodayIstDate()) return 'The report range must start today or later.';
   const rangeDays = Math.floor((Date.parse(`${values.toDate}T00:00:00Z`) - Date.parse(`${values.fromDate}T00:00:00Z`)) / (24 * 60 * 60 * 1000)) + 1;
   if (rangeDays > 366) return 'Custom report ranges cannot exceed one year.';
   if (options.requireStation && !values.stationId) return 'Select a station.';

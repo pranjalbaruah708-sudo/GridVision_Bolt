@@ -26,6 +26,7 @@ export type ReportFilterValues = {
   threshold?: string;
   parameter?: string;
   comparisonMetric?: string;
+  operatorId?: string;
 };
 
 export type ReportFilterOptions = {
@@ -38,8 +39,10 @@ export type ReportFilterOptions = {
   thresholdApplicable?: boolean;
   parameterOptions?: Array<{ value: string; label: string }>;
   comparisonMetricOptions?: Array<{ value: string; label: string }>;
+  operatorOptions?: Array<{ value: string; label: string }>;
   requireStation?: boolean;
   requireFeeder?: boolean;
+  futureOnly?: boolean;
 };
 
 export type ReportSummaryCard = {

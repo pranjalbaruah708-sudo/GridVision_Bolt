@@ -9,11 +9,12 @@ import { getRoleLabel, hasCapability, type AppRole, type Capability } from '@/se
 import { isAndroidApp, minimizeAndroidApp } from '@/services/platform/runtime';
 import { DesktopPageContainer } from '@/components/layout/DesktopPageContainer';
 
-export type MoreDestination = 'profile' | 'current-shift' | 'shift-handover' | 'shift-schedule' | 'shift-operations' | 'shift-history' | 'operator-entry' | 'interruption-entry' | 'station-condition' | 'operational-timeline' | 'organisation-structure' | 'network-master-data' | 'users-access' | 'system-configuration' | 'audit-activity' | 'settings' | 'help-about';
+export type MoreDestination = 'profile' | 'current-shift' | 'shift-handover' | 'shift-schedule' | 'shift-operations' | 'shift-history' | 'operator-entry' | 'interruption-entry' | 'station-condition' | 'operational-timeline' | 'operational-summary' | 'organisation-structure' | 'network-master-data' | 'users-access' | 'system-configuration' | 'audit-activity' | 'settings' | 'help-about';
 
 type MenuItem = { id: MoreDestination; label: string; description: string; icon: LucideIcon; tone: string; capabilities?: readonly Capability[]; badge?: (role: AppRole) => string | null };
 
 const OPERATIONAL_ITEMS: MenuItem[] = [
+  { id: 'operational-summary', label: 'Operational Summary', description: 'Review period activity and current open conditions', icon: ClipboardCheck, tone: 'bg-indigo-600' },
   { id: 'operational-timeline', label: 'Operational Timeline', description: 'Read chronological station and office operational history', icon: Clock3, tone: 'bg-indigo-600' },
   { id: 'station-condition', label: 'Station Condition', description: 'Record equipment and station observations', icon: ClipboardCheck, tone: 'bg-amber-600', capabilities: ['create_parameter_entry'] },
   { id: 'current-shift', label: 'Current Shift', description: 'Start or end duty and view the shift team', icon: Clock3, tone: 'bg-emerald-600' },

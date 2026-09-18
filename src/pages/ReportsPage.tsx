@@ -42,6 +42,7 @@ export type ReportType =
   | 'operator-activity'
   | 'notification-delivery'
   | 'shift-attendance'
+  | 'operator-duty'
   | 'shift-handover'
   | 'shift-compliance';
 
@@ -127,6 +128,15 @@ export const REPORT_DEFINITIONS: ReportDefinition[] = [
     implemented: true,
   },
   {
+    type: 'operator-duty',
+    group: 'Operational Reports',
+    title: 'Operator Duty',
+    description: 'View current and upcoming rostered duties by operator.',
+    icon: UsersRound,
+    tone: 'bg-blue-50 text-blue-700',
+    implemented: true,
+  },
+  {
     type: 'shift-handover',
     group: 'Operational Reports',
     title: 'Shift Handover',
@@ -201,7 +211,7 @@ const REPORT_ROUTE_SUB: Record<ReportType, string> = {
   'station-performance': 'station-performance-report', 'feeder-performance': 'feeder-performance-report',
   'executive-summary': 'executive-summary-report', 'operator-activity': 'operator-activity-report',
   'notification-delivery': 'notification-delivery-report', 'shift-attendance': 'shift-attendance-report',
-  'shift-handover': 'shift-handover-report', 'shift-compliance': 'shift-compliance-report',
+  'shift-handover': 'shift-handover-report', 'shift-compliance': 'shift-compliance-report', 'operator-duty': 'operator-duty-report',
 };
 
 export function getAvailableReportNavigation(role: AppRole) {

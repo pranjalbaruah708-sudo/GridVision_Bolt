@@ -35,6 +35,7 @@ type ReportFiltersProps = {
   onChange: (values: ReportFilterValues) => void;
   onGenerate: () => void;
   desktopLayout?: boolean;
+  futureOnly?: boolean;
 };
 
 export function ReportFilters({
@@ -44,23 +45,24 @@ export function ReportFilters({
   onChange,
   onGenerate,
   desktopLayout = false,
+  futureOnly = false,
 }: ReportFiltersProps) {
   const feeders = useMemo(
     () => options.feeders.filter((feeder) => !values.stationId || feeder.station_id === values.stationId),
     [options.feeders, values.stationId]
   );
-  const validationError = validateReportFilters(values, options);
+  const validationError = validateReportFilters(values, { ...options, futureOnly });
 
   function updatePeriod(period: ReportPeriod) {
     if (period === 'custom') {
-      onChange({ ...values, period });
+      onChange({ ...values, period, operatorId: '' });
       return;
     }
-    onChange({ ...values, period, ...getReportPeriodDates(period) });
+    onChange({ ...values, period, ...getReportPeriodDates(period), operatorId: '' });
   }
 
   function updateDate(key: 'fromDate' | 'toDate', value: string) {
-    onChange({ ...values, period: 'custom', [key]: value });
+    onChange({ ...values, period: 'custom', [key]: value, operatorId: '' });
   }
 
   return (
@@ -72,7 +74,7 @@ export function ReportFilters({
 
       <div className={`grid gap-3 sm:grid-cols-2 ${desktopLayout ? 'lg:grid-cols-3 xl:grid-cols-5' : ''}`}>
         <Field label="Station scope">
-          <select value={values.stationId} onChange={(event) => onChange({ ...values, stationId: event.target.value, feederId: '' })} className={INPUT_CLASS}>
+          <select value={values.stationId} onChange={(event) => onChange({ ...values, stationId: event.target.value, feederId: '', operatorId: '' })} className={INPUT_CLASS}>
             {!options.requireStation && <option value="">All accessible stations</option>}
             {options.stations.map((station) => <option key={station.id} value={station.id}>{station.name}</option>)}
           </select>
@@ -89,16 +91,16 @@ export function ReportFilters({
 
         <Field label="Period">
           <select value={values.period} onChange={(event) => updatePeriod(event.target.value as ReportPeriod)} className={INPUT_CLASS}>
-            {PERIOD_OPTIONS.map((period) => <option key={period.value} value={period.value}>{period.label}</option>)}
+            {PERIOD_OPTIONS.filter((period) => !futureOnly || period.value === 'today' || period.value === 'custom').map((period) => <option key={period.value} value={period.value}>{period.label}</option>)}
           </select>
         </Field>
 
         <Field label="From">
-          <input type="date" value={values.fromDate} max={values.toDate || getTodayIstDate()} onChange={(event) => updateDate('fromDate', event.target.value)} className={INPUT_CLASS} />
+          <input type="date" value={values.fromDate} min={futureOnly ? getTodayIstDate() : undefined} max={futureOnly ? (values.toDate || undefined) : (values.toDate || getTodayIstDate())} onChange={(event) => updateDate('fromDate', event.target.value)} className={INPUT_CLASS} />
         </Field>
 
         <Field label="To">
-          <input type="date" value={values.toDate} min={values.fromDate} max={getTodayIstDate()} onChange={(event) => updateDate('toDate', event.target.value)} className={INPUT_CLASS} />
+          <input type="date" value={values.toDate} min={futureOnly ? (values.fromDate || getTodayIstDate()) : values.fromDate} max={futureOnly ? undefined : getTodayIstDate()} onChange={(event) => updateDate('toDate', event.target.value)} className={INPUT_CLASS} />
         </Field>
 
         {options.groupingOptions && options.groupingOptions.length > 0 && (
@@ -139,6 +141,15 @@ export function ReportFilters({
             <select value={values.parameter ?? ''} onChange={(event) => onChange({ ...values, parameter: event.target.value })} className={INPUT_CLASS}>
               <option value="">All configured parameters</option>
               {options.parameterOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </Field>
+        )}
+
+        {options.operatorOptions && (
+          <Field label={options.operatorOptions.length === 0 ? 'Operator (generate report to load options)' : 'Operator'}>
+            <select value={values.operatorId ?? ''} onChange={(event) => onChange({ ...values, operatorId: event.target.value })} className={INPUT_CLASS}>
+              <option value="">All operators</option>
+              {options.operatorOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </Field>
         )}

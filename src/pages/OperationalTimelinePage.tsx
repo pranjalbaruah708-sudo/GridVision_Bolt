@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, AlertTriangle, ArrowRightLeft, ClipboardCheck, Power, RefreshCw, Users, ZapOff, type LucideIcon } from 'lucide-react';
 import { AppHeader } from '@/components/ui/Page';
+import { HandoverAccountability } from '@/components/HandoverAccountability';
 import { DesktopPageContainer } from '@/components/layout/DesktopPageContainer';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/hooks/useAuth';
@@ -135,7 +136,11 @@ function TimelineRows({ query, group, names }: { query: OperationalQuery; group:
       offset.current += batch.length;
       setMore(batch.length === PAGE_SIZE && offset.current < MAX_LOADED);
       setRows(previous => {
-        const unique = new Map(previous.map(row => [`${row.event_type}:${row.source_id}`, row]));
+        const audits = new Map(batch.flatMap(row => row.handover ? [[row.source_id, row.handover] as const] : []));
+        const unique = new Map(previous.map(row => {
+          const handover = audits.get(row.source_id);
+          return [`${row.event_type}:${row.source_id}`, handover ? { ...row, status: handover.status, handover } : row];
+        }));
         batch.forEach(row => unique.set(`${row.event_type}:${row.source_id}`, row));
         return [...unique.values()].sort((a, b) => Date.parse(b.event_time) - Date.parse(a.event_time)
           || a.event_type.localeCompare(b.event_type) || a.source_id.localeCompare(b.source_id));
@@ -161,7 +166,7 @@ function TimelineRows({ query, group, names }: { query: OperationalQuery; group:
   return <section aria-label="Operational events" aria-busy={busy} className="min-w-0 space-y-3">
     <p className="text-xs text-slate-500">Newest first · Times in Asia/Kolkata{group !== 'All' && ' · Event type filters loaded events; load more to search older events.'}</p>
     {error && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-800">{error}<button type="button" disabled={busy} onClick={() => void load()} className="ml-3 font-semibold underline">Retry</button></div>}
-    {!busy && !error && visible.length === 0 && <p className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">{more && group !== 'All' ? 'No matching events in the loaded pages. Load more to check older events.' : 'No operational events found for the selected period and scope.'}</p>}
+    {!busy && !error && visible.length === 0 && <p className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600">{group !== 'All' && (more || offset.current >= MAX_LOADED) ? 'No matching events in the loaded pages. Load more or narrow the period and scope.' : 'No operational events found for the selected period and scope.'}</p>}
     <ol className="space-y-3">{visible.map(row => {
       const style = visuals[row.event_type];
       const Icon = style?.icon ?? Activity;
@@ -173,7 +178,8 @@ function TimelineRows({ query, group, names }: { query: OperationalQuery; group:
           <p className="mt-1 text-sm font-medium text-slate-700">{names.get(row.station_id) ?? 'Authorized station'}{feeder ? ` · ${feeder}` : ''}{row.equipment_area ? ` · ${row.equipment_area}` : ''}</p>
           {row.title && row.title.toLowerCase() !== style?.label.toLowerCase() && <p className="mt-1 text-sm text-slate-700">{row.title}</p>}
           {row.details && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{row.details}</p>}
-          {(row.severity || row.status) && <div className="mt-2 flex flex-wrap gap-2">{[row.severity, row.status].filter(Boolean).map((value, index) => <span key={index} className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">{pretty(value!)}</span>)}</div>}
+          {row.handover && <HandoverAccountability value={row.handover} side={row.event_type === 'HANDOVER_ACCEPTED' ? 'incoming' : 'outgoing'} />}
+          {!row.handover && (row.severity || row.status) && <div className="mt-2 flex flex-wrap gap-2">{[row.severity, row.status].filter(Boolean).map((value, index) => <span key={index} className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">{pretty(value!)}</span>)}</div>}
         </div>
       </li>;
     })}</ol>

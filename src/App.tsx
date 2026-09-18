@@ -38,6 +38,8 @@ import { InterruptionReportPage } from '@/pages/Reports/InterruptionReportPage';
 import { LoadEnergyReportPage } from '@/pages/Reports/LoadEnergyReportPage';
 import { DataCompletenessReportPage } from '@/pages/Reports/DataCompletenessReportPage';
 import { ParameterExceptionReportPage } from '@/pages/Reports/ParameterExceptionReportPage';
+import { ShiftAttendanceReportPage } from '@/pages/Reports/ShiftAttendanceReportPage';
+import { OperatorDutyReportPage } from '@/pages/Reports/OperatorDutyReportPage';
 import { PerformanceReportPage } from '@/pages/Reports/PerformanceReportPage';
 import { ExecutiveSummaryReportPage } from '@/pages/Reports/ExecutiveSummaryReportPage';
 import { NotificationDeliveryReportPage, OperatorActivityReportPage } from '@/pages/Reports/AdministrativeReportPages';
@@ -46,6 +48,7 @@ import { OperatorEntryPage } from '@/pages/OperatorEntryPage';
 import { InterruptionEntryPage } from '@/pages/InterruptionEntryPage';
 import { StationConditionPage } from '@/pages/StationConditionPage';
 import { OperationalTimelinePage } from '@/pages/OperationalTimelinePage';
+import { OperationalSummaryPage } from '@/pages/OperationalSummaryPage';
 
 import { MorePage, type MoreDestination } from '@/pages/MorePage';
 import { MoreRouteShell } from '@/pages/MoreRouteShell';
@@ -59,6 +62,8 @@ import { CurrentShiftPage } from '@/pages/CurrentShiftPage';
 import { ShiftSchedulePage } from '@/pages/ShiftSchedulePage';
 import { ShiftHandoverPage } from '@/pages/ShiftHandoverPage';
 import { ShiftOperationsPage } from '@/pages/ShiftOperationsPage';
+import { OperatorDutyEntryGate } from '@/components/OperatorDutyEntryGate';
+import { OperatorDutyStartupPrompt } from '@/components/OperatorDutyStartupPrompt';
 
 import { SignInPage } from '@/pages/SignInPage';
 const DevShiftTestTokenPage = import.meta.env.DEV
@@ -79,6 +84,8 @@ import {
   deactivateCurrentDeviceToken,
   GRIDVISION_NOTIFICATION_OPENED_EVENT,
 } from '@/pushNotifications';
+
+import { ShiftHandoverReportPage } from '@/pages/Reports/ShiftHandoverReportPage';
 
 const MORE_ROUTE_SHELL_TITLES: Partial<Record<MoreDestination, string>> = {
   'help-about': 'Help & About',
@@ -319,6 +326,7 @@ function Shell() {
 
   const renderRoutedPage = (content: React.ReactNode, active = route.tab) => (
     <ResponsiveAppShell active={active} onNavigate={(tab) => go({ tab })} identity={shellIdentity} onOpenProfile={() => go({ tab: 'more', sub: 'profile' })} onOpenAlerts={() => go({ tab: 'alerts', sub: 'all' })} onSignOut={handleSignOut} route={route} selectedModule={selectedModule ?? 'manual'} onNavigateRoute={go} onOpenModuleSelection={() => setSelectedModule(null)} onSelectModule={(module) => { if (module === 'manual' || module === 'shutdown') { setSelectedModule(module); go({ tab: 'dashboard' }); } }}>
+      <OperatorDutyStartupPrompt role={role} />
       {content}
     </ResponsiveAppShell>
   );
@@ -419,7 +427,7 @@ function Shell() {
         role={getRoleLabel(role)}
         avatarUrl={auth.user?.user_metadata?.avatar_url ?? null}
         siteContext={desktopProfile?.assigned_offices?.[0] ?? null}
-        onSelectModule={(module) => setSelectedModule(module)}
+        onSelectModule={(module) => { setSelectedModule(module); go({ tab: 'dashboard' }); }}
         onProfile={() => {
           setSelectedModule('manual');
           go({ tab: 'more', sub: 'profile' });
@@ -532,12 +540,18 @@ function Shell() {
   }
 
   if (route.tab === 'reports' && route.sub === 'shift-attendance-report') {
-    return renderRoutedPage(<ShiftOperationsPage view="attendance-report" onBack={returnToReports} />, 'reports');
+    return renderRoutedPage(<ShiftAttendanceReportPage onBack={returnToReports} />, 'reports');
+  }
+  if (route.tab === 'reports' && route.sub === 'operator-duty-report') {
+    return renderRoutedPage(<OperatorDutyReportPage onBack={returnToReports} />, 'reports');
   }
 
   if (route.tab === 'reports' && route.sub === 'shift-handover-report') {
-    return renderRoutedPage(<ShiftOperationsPage view="handover-report" onBack={returnToReports} />, 'reports');
-  }
+  return renderRoutedPage(
+    <ShiftHandoverReportPage onBack={returnToReports} />,
+    'reports'
+  );
+}
 
   if (route.tab === 'reports' && route.sub === 'shift-compliance-report') {
     return renderRoutedPage(<ShiftOperationsPage view="compliance-report" onBack={returnToReports} />, 'reports');
@@ -552,7 +566,7 @@ function Shell() {
     route.tab === 'more' &&
     route.sub === 'operator-entry'
   ) {
-    return renderRoutedPage(<OperatorEntryPage onBack={returnToMore} initialReviewOperation={reviewOperation} onReviewConsumed={() => setReviewOperation(null)} />, 'more');
+    return renderRoutedPage(<OperatorDutyEntryGate role={role}><OperatorEntryPage onBack={returnToMore} initialReviewOperation={reviewOperation} onReviewConsumed={() => setReviewOperation(null)} /></OperatorDutyEntryGate>, 'more');
   }
 
 
@@ -564,14 +578,17 @@ function Shell() {
     route.tab === 'more' &&
     route.sub === 'interruption-entry'
   ) {
-    return renderRoutedPage(<InterruptionEntryPage onBack={returnToMore} />, 'more');
+    return renderRoutedPage(<OperatorDutyEntryGate role={role}><InterruptionEntryPage onBack={returnToMore} /></OperatorDutyEntryGate>, 'more');
   }
 
+  if (route.tab === 'more' && route.sub === 'operational-summary') {
+    return renderRoutedPage(<OperationalSummaryPage onBack={returnToMore} />, 'more');
+  }
   if (route.tab === 'more' && route.sub === 'operational-timeline') {
     return renderRoutedPage(<OperationalTimelinePage onBack={returnToMore} />, 'more');
   }
   if (route.tab === 'more' && route.sub === 'station-condition') {
-    return renderRoutedPage(<StationConditionPage onBack={returnToMore} />, 'more');
+    return renderRoutedPage(<OperatorDutyEntryGate role={role}><StationConditionPage onBack={returnToMore} /></OperatorDutyEntryGate>, 'more');
   }
 
 
@@ -600,11 +617,11 @@ function Shell() {
   }
 
   if (route.tab === 'more' && route.sub === 'current-shift') {
-    return renderRoutedPage(<CurrentShiftPage onBack={returnToMore} onOpenHandover={() => go({ tab: 'more', sub: 'shift-handover' })} />, 'more');
+    return renderRoutedPage(<CurrentShiftPage role={role} onBack={returnToMore} onOpenHandover={() => go({ tab: 'more', sub: 'shift-handover' })} />, 'more');
   }
 
   if (route.tab === 'more' && route.sub === 'shift-handover') {
-    return renderRoutedPage(<ShiftHandoverPage onBack={() => go({ tab: 'more', sub: 'current-shift' })} />, 'more');
+    return renderRoutedPage(<OperatorDutyEntryGate role={role}><ShiftHandoverPage onBack={() => go({ tab: 'more', sub: 'current-shift' })} /></OperatorDutyEntryGate>, 'more');
   }
 
   if (route.tab === 'more' && route.sub === 'shift-schedule') {
@@ -766,6 +783,21 @@ function Shell() {
             }
             if (reportType === 'notification-delivery') {
               go({ tab: 'reports', sub: 'notification-delivery-report' });
+            }
+            if (reportType === 'shift-attendance') {
+              go({ tab: 'reports', sub: 'shift-attendance-report' });
+            }
+            if (reportType === 'operator-duty') {
+              go({ tab: 'reports', sub: 'operator-duty-report' });
+            }
+            if (reportType === 'shift-handover') {
+              go({
+             tab: 'reports',
+               sub: 'shift-handover-report',
+              });
+            }
+            if (reportType === 'shift-compliance') {
+              go({ tab: 'reports', sub: 'shift-compliance-report' });
             }
           }}
         />

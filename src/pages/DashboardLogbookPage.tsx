@@ -148,7 +148,9 @@ export function DashboardLogbookPage({ onBack, onNavigate }: { onBack: () => voi
   }, [refreshAttention, refreshSummary, refreshTrend]);
   useRealtimeRefresh({ channelName: 'dashboard-operational-refresh', tables: DASHBOARD_REALTIME_TABLES, onRefresh: refreshFromRealtime });
 
-  const trendPoints = useMemo<TrendPoint[]>(() => (trend.data ?? []).map((row) => ({ ...row, label: `${String(row.hour_no).padStart(2, '0')}:00`, tooltipValue: row.total_mw ?? 0, emptyValue: row.total_mw === null ? 0 : null })), [trend.data]);
+  const trendPoints = useMemo<TrendPoint[]>(() => (trend.data ?? [])
+    .filter((row) => row.fill_status !== 'FUTURE')
+    .map((row) => ({ ...row, label: `${String(row.hour_no).padStart(2, '0')}:00`, tooltipValue: row.total_mw ?? 0, emptyValue: row.total_mw === null ? 0 : null })), [trend.data]);
   const completeHours = useMemo(() => trendPoints.filter((row) => row.fill_status === 'FULL').length, [trendPoints]);
   const expectedHours = useMemo(() => trendPoints.filter((row) => row.fill_status !== 'FUTURE').length, [trendPoints]);
   const peakPoint = useMemo(() => trendPoints.filter((row) => row.total_mw !== null).reduce<TrendPoint | null>((peak, row) => !peak || Number(row.total_mw) > Number(peak.total_mw) ? row : peak, null), [trendPoints]);

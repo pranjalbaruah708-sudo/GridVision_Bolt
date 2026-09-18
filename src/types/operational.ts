@@ -52,6 +52,7 @@ export interface OperationalScopeOption {
 export type OperationalEventType = 'PARAMETER_ENTRY' | 'INTERRUPTION' | 'RESTORATION' | 'ALERT'
   | 'STATION_CONDITION' | 'DUTY_STARTED' | 'DUTY_ENDED' | 'HANDOVER_SUBMITTED' | 'HANDOVER_ACCEPTED';
 export interface OperationalTimelineEvent {
+  handover?: import('@/services/handoverAccountability').HandoverAccountability;
   event_type: OperationalEventType;
   source_id: string;
   event_time: string;
@@ -79,4 +80,14 @@ export interface OperationalSummary {
   duty_ends: number;
   handovers_submitted: number;
   handovers_accepted: number;
+}
+export interface OperationalOpenCondition {
+  id: string;
+  station_id: string;
+  station_name: string;
+  observed_at: string;
+  category: StationConditionCategory;
+  equipment_area: string | null;
+  condition: StationConditionValue;
+  observation: string;
 }

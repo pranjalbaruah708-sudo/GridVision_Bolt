@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-15T02:35:18.780Z",
+  "project": "eetlzxntgvjompmipprb",
+  "results": [
+    {
+      "area": "ADMIN BOOTSTRAP OPERATOR_A",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "area": "ADMIN BOOTSTRAP OPERATOR_B",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "area": "ADMIN BOOTSTRAP FIELD_OFFICER",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "area": "ADMIN BOOTSTRAP ADMIN",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "area": "NORMAL AUTH OPERATOR_A",
+      "status": "BLOCKED",
+      "detail": "captcha_failed; HTTP 400"
+    },
+    {
+      "area": "NORMAL AUTH OPERATOR_B",
+      "status": "BLOCKED",
+      "detail": "captcha_failed; HTTP 400"
+    },
+    {
+      "area": "NORMAL AUTH FIELD_OFFICER",
+      "status": "BLOCKED",
+      "detail": "captcha_failed; HTTP 400"
+    },
+    {
+      "area": "NORMAL AUTH ADMIN",
+      "status": "BLOCKED",
+      "detail": "captcha_failed; HTTP 400"
+    },
+    {
+      "area": "Normal-user runtime / real offline replay / session refresh",
+      "status": "BLOCKED",
+      "detail": "Normal password authentication did not establish every actor session; fixtures/tests not substituted with admin access"
+    },
+    {
+      "area": "ADMIN CLEANUP and absence verification",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

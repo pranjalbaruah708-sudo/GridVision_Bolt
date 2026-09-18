@@ -1,8 +1,10 @@
 import { supabase } from './supabase';
 import { isOnline } from './offline';
+import { getHandoverAccountability } from './handoverAccountability';
 import type {
   CreateStationConditionInput, OperationalQuery, OperationalScopeOption,
   OperationalSummary, OperationalTimelineEvent, StationCondition,
+  OperationalOpenCondition,
 } from '@/types/operational';
 
 function queryArgs(query: OperationalQuery) {
@@ -61,11 +63,21 @@ export const operationalApi = {
       ...queryArgs(query), p_limit: limit, p_offset: offset,
     });
     if (error) throw error;
-    return (data ?? []) as OperationalTimelineEvent[];
+    const rows = (data ?? []) as OperationalTimelineEvent[];
+    const audit = await getHandoverAccountability(rows.filter(row => row.event_type === 'HANDOVER_SUBMITTED' || row.event_type === 'HANDOVER_ACCEPTED').map(row => row.source_id));
+    return rows.map(row => {
+      const handover = audit.get(row.source_id);
+      return handover ? { ...row, status: handover.status, handover } : row;
+    });
   },
   async getSummary(query: OperationalQuery): Promise<OperationalSummary> {
     const { data, error } = await supabase.rpc('get_operational_summary', queryArgs(query)).single();
     if (error) throw error;
     return data as OperationalSummary;
+  },
+  async getOpenConditions(query: OperationalQuery): Promise<OperationalOpenCondition[]> {
+    const { data, error } = await supabase.rpc('get_operational_open_conditions', queryArgs(query));
+    if (error) throw error;
+    return (data ?? []) as OperationalOpenCondition[];
   },
 };

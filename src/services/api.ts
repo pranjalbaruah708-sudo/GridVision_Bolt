@@ -1,3 +1,4 @@
+import { getHandoverAccountability, type HandoverAccountability } from './handoverAccountability';
 // Decoupled API service.
 //
 // All database interactions go through this module.
@@ -160,7 +161,20 @@ export type StationShiftScheduleInput = {
   scheduledEnd: string;
 };
 
+export type StationShiftPatternRepeatResult = {
+  outcome: 'CREATED' | 'SKIPPED';
+  seed_shift_id: string;
+  shift_id: string | null;
+  shift_name: string;
+  shift_date: string;
+  scheduled_start: string;
+  scheduled_end: string;
+  skipped_reason: string | null;
+  omitted_roster_count: number;
+};
+
 export type ShiftHandover = {
+  accountability?: HandoverAccountability;
   id: string;
   station_id: string;
   outgoing_shift_id: string;
@@ -214,6 +228,7 @@ export type ShiftComplianceDutyParticipant = {
 };
 
 export type ShiftComplianceHandover = {
+  accountability?: HandoverAccountability;
   id: string;
   status: ShiftHandoverStatus;
   incoming_shift_id: string;
@@ -230,6 +245,11 @@ export type ShiftComplianceRow = Omit<StationShift, 'created_at' | 'updated_at'>
   roster: ShiftComplianceRosterMember[];
   duty_sessions: ShiftComplianceDutyParticipant[];
   handover: ShiftComplianceHandover | null;
+};
+export type OperatorDutyReportRow = {
+  id: string; station_id: string; station_name: string; shift_date: string; shift_name: string;
+  scheduled_start: string; scheduled_end: string; status: StationShiftStatus; user_id: string;
+  operator_name: string; duty_role: ShiftRole; duty_state: 'CURRENT' | 'UPCOMING';
 };
 
 export type OrgUnitType = { unit_type: string; hierarchy_rank: number };
@@ -508,6 +528,32 @@ export type NewInterruptionPayload = {
 /* =========================================================
    RPC RESULT TYPES
 ========================================================= */
+export interface ShiftHandoverReportRow {
+  id: string;
+  station_id: string;
+  outgoing_shift_id: string;
+  incoming_shift_id: string;
+  outgoing_shift_date: string;
+  incoming_shift_date: string;
+  outgoing_notes: string | null;
+  acceptance_comments: string | null;
+  created_at: string;
+  updated_at: string;
+
+  // Added from get_shift_handover_accountability()
+  status: string;
+  outgoing_shift_name: string;
+  incoming_shift_name: string;
+  outgoing_in_charge_name: string | null;
+  incoming_in_charge_name: string | null;
+  submitted_by_name: string | null;
+  submitted_at: string | null;
+  accepted_by_name: string | null;
+  accepted_at: string | null;
+}
+
+
+
 
 type MonthStatusRpcRow = {
   entry_date: string;
@@ -594,6 +640,8 @@ export type LoadAnalysisRankingRow = {
   id: string;
   name: string;
   peak_mw: number | null;
+  minimum_voltage_kv: number | null;
+  maximum_current_a: number | null;
   minimum_power_factor: number | null;
   entered_feeder_hours: number;
   expected_feeder_hours: number;
@@ -1102,6 +1150,14 @@ export const api = {
     if (error) throw error;
     return mapShiftDutySession(data as unknown as Record<string, unknown>);
   },
+  async recordShiftDutyWarningAcknowledgement(shiftId: string, decision: 'START_DUTY' | 'CONTINUE_WITHOUT_STARTING', reasonCode?: string, reasonText?: string): Promise<void> {
+    const { error } = await supabase.rpc('record_shift_duty_warning_acknowledgement', { p_shift_id: shiftId, p_decision: decision, p_reason_code: reasonCode ?? null, p_reason_text: reasonText ?? null });
+    if (error) throw error;
+  },
+  async recordShiftDutyException(shiftId: string, reason: string): Promise<void> {
+    const { error } = await supabase.rpc('record_shift_duty_exception', { p_shift_id: shiftId, p_reason: reason });
+    if (error) throw error;
+  },
 
   async endShiftDuty(dutySessionId: string): Promise<ShiftDutySession> {
     const { data, error } = await supabase.rpc('end_shift_duty', { p_duty_session_id: dutySessionId });
@@ -1163,7 +1219,9 @@ export const api = {
   async getShiftHandover(handoverId: string): Promise<ShiftHandover | null> {
     const { data, error } = await supabase.from('shift_handovers').select('*').eq('id', handoverId).maybeSingle();
     if (error) throw error;
-    return data ? mapShiftHandover(data as Record<string, unknown>) : null;
+    if (!data) return null;
+    const accountability = (await getHandoverAccountability([handoverId])).get(handoverId);
+    return { ...mapShiftHandover(data as Record<string, unknown>), ...(accountability ? { status: accountability.status as ShiftHandoverStatus, submitted_at: accountability.submitted_at, accepted_at: accountability.accepted_at, accountability } : {}) };
   },
 
   async getShiftHandoverItems(handoverId: string): Promise<ShiftHandoverItem[]> {
@@ -1192,7 +1250,22 @@ export const api = {
       p_limit: limit,
     });
     if (error) throw error;
-    return (data ?? []).map((row: Record<string, unknown>) => mapShiftComplianceRow(row));
+    const rows: ShiftComplianceRow[] = (data ?? []).map((row: Record<string, unknown>) => mapShiftComplianceRow(row));
+    const audit = await getHandoverAccountability(rows.flatMap(row => row.handover ? [row.handover.id] : []));
+    return rows.map(row => {
+      const accountability = row.handover && audit.get(row.handover.id);
+      return accountability && row.handover ? { ...row, handover: { ...row.handover, ...accountability, status: accountability.status as ShiftHandoverStatus, accountability } } : row;
+    });
+  },
+  async getOperatorDutyReport(from: string, to: string, stationId: string | null = null, operatorId: string | null = null): Promise<OperatorDutyReportRow[]> {
+    const { data, error } = await supabase.rpc('get_operator_duty_report', { p_from: from, p_to: to, p_station_id: stationId, p_operator_id: operatorId });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      id: String(row.id), station_id: String(row.station_id), station_name: String(row.station_name), shift_date: String(row.shift_date), shift_name: String(row.shift_name),
+      scheduled_start: String(row.scheduled_start), scheduled_end: String(row.scheduled_end), status: String(row.status) as StationShiftStatus,
+      user_id: String(row.user_id), operator_name: String(row.operator_name), duty_role: String(row.duty_role) as ShiftRole,
+      duty_state: String(row.duty_state) === 'CURRENT' ? 'CURRENT' as const : 'UPCOMING' as const,
+    }));
   },
 
   async saveStationShift(input: StationShiftScheduleInput): Promise<StationShift> {
@@ -1206,6 +1279,34 @@ export const api = {
     });
     if (error) throw error;
     return mapStationShift(data as unknown as Record<string, unknown>);
+  },
+
+  async repeatStationShiftPattern(input: {
+    stationId: string;
+    patternFrom: string;
+    patternTo: string;
+    durationValue: number;
+    durationUnit: 'days' | 'months';
+  }): Promise<StationShiftPatternRepeatResult[]> {
+    const { data, error } = await supabase.rpc('repeat_station_shift_pattern', {
+      p_station_id: input.stationId,
+      p_pattern_from: input.patternFrom,
+      p_pattern_to: input.patternTo,
+      p_duration_value: input.durationValue,
+      p_duration_unit: input.durationUnit,
+    });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      outcome: String(row.outcome) as StationShiftPatternRepeatResult['outcome'],
+      seed_shift_id: String(row.seed_shift_id),
+      shift_id: row.shift_id == null ? null : String(row.shift_id),
+      shift_name: String(row.shift_name),
+      shift_date: String(row.shift_date),
+      scheduled_start: String(row.scheduled_start),
+      scheduled_end: String(row.scheduled_end),
+      skipped_reason: row.skipped_reason == null ? null : String(row.skipped_reason),
+      omitted_roster_count: Number(row.omitted_roster_count ?? 0),
+    }));
   },
 
   async cancelStationShift(shiftId: string): Promise<StationShift> {
@@ -1241,6 +1342,73 @@ export const api = {
     if (error) throw error;
     return (data ?? []).map((row: Record<string, unknown>) => mapShiftRosterAssignment(row));
   },
+
+async getStationShiftHandoverReport(
+  stationId: string | null,
+  from: string,
+  to: string,
+  limit = 500,
+): Promise<ShiftHandoverReportRow[]> {
+
+  const { data, error } = await supabase.rpc(
+    'get_station_shift_handover_report',
+    {
+  p_station_id: stationId,
+  p_from: from,
+  p_to: to,
+  p_limit: limit,
+}
+  );
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    station_id: string;
+    outgoing_shift_id: string;
+    incoming_shift_id: string;
+    outgoing_shift_date: string;
+    incoming_shift_date: string;
+    outgoing_notes: string | null;
+    acceptance_comments: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  if (!rows.length) {
+    return [];
+  }
+
+  const accountability = await getHandoverAccountability(
+    rows.map((row) => row.id),
+  );
+
+  return rows.map((row) => {
+    const audit = accountability.get(row.id);
+
+    return {
+      ...row,
+      status: audit?.status ?? 'UNKNOWN',
+      outgoing_shift_name:
+        audit?.outgoing_shift_name ?? 'Outgoing shift',
+      incoming_shift_name:
+        audit?.incoming_shift_name ?? 'Incoming shift',
+      outgoing_in_charge_name:
+        audit?.outgoing_in_charge_name ?? null,
+      incoming_in_charge_name:
+        audit?.incoming_in_charge_name ?? null,
+      submitted_by_name:
+        audit?.submitted_by_name ?? null,
+      submitted_at:
+        audit?.submitted_at ?? null,
+      accepted_by_name:
+        audit?.accepted_by_name ?? null,
+      accepted_at:
+        audit?.accepted_at ?? null,
+    };
+  });
+},
+
 
 
 async getLoadEnergyReadings(
@@ -1700,7 +1868,7 @@ async getLoadAnalysisRanking(startIso: string, endIso: string, stationId: string
   if (error) throw error;
   return (data ?? []).map((row: Record<string, unknown>) => ({
     id: String(row.feeder_id ?? row.station_id), name: String(row.feeder_name ?? row.station_name),
-    peak_mw: row.peak_mw === null ? null : Number(row.peak_mw), minimum_power_factor: row.minimum_power_factor === null ? null : Number(row.minimum_power_factor),
+    peak_mw: row.peak_mw === null ? null : Number(row.peak_mw), minimum_voltage_kv: row.minimum_voltage_kv === null || row.minimum_voltage_kv === undefined ? null : Number(row.minimum_voltage_kv), maximum_current_a: row.maximum_current_a === null || row.maximum_current_a === undefined ? null : Number(row.maximum_current_a), minimum_power_factor: row.minimum_power_factor === null ? null : Number(row.minimum_power_factor),
     entered_feeder_hours: Number(row.entered_feeder_hours ?? 0), expected_feeder_hours: Number(row.expected_feeder_hours ?? 0), completeness_percent: Number(row.completeness_percent ?? 0),
   }));
 },
@@ -2368,6 +2536,14 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
       .filter(
         Boolean
       );
+  },
+
+  async getMyOperationalStationIds(): Promise<string[]> {
+    const { data, error } = await supabase.rpc('get_my_operational_station_ids');
+    if (error) throw error;
+    return (data ?? [])
+      .map((row: { station_id: string }) => row.station_id)
+      .filter(Boolean);
   },
 
   /* =======================================================
@@ -3743,13 +3919,42 @@ async function runQueued(
     }
     const headers = await getAuthHeaders();
     if (!(await queueSyncSessionIsCurrent(ownerUserId))) throw new QueuedSyncSessionChangedError();
+    const args = stationConditionCreateArgs({ ...input,
+      client_operation_id: op.clientOperationId, entry_mode: op.entryMode,
+      recorded_at: new Date(op.recordedAt).toISOString(),
+    });
     const response = await fetch(`${REST_URL}/rpc/create_station_condition`, {
       method: 'POST', headers,
-      body: JSON.stringify(stationConditionCreateArgs({ ...input,
-        client_operation_id: op.clientOperationId, entry_mode: op.entryMode,
-        recorded_at: new Date(op.recordedAt).toISOString(),
-      })),
+      body: JSON.stringify(args),
     });
+    if (import.meta.env.DEV) {
+      // Diagnostics only: never emit the payload, identity, credentials or headers.
+      // A fingerprint lets first-save and retry payloads be compared without their contents.
+      try {
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(args)));
+        const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+        const body: unknown = response.ok ? null : await response.clone().json().catch(() => null);
+        const error = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+        const safeMessages = [
+          'Invalid observation or recording time/mode',
+          'Station write access is not authorized',
+          'Operation identifier already used for a different record',
+        ];
+        const serverTime = Date.parse(response.headers.get('date') ?? '');
+        console.info('[StationCondition replay DEV]', {
+          rpc: 'create_station_condition', operationType: op.operationType,
+          attempt: op.retryCount + 1, entryMode: op.entryMode, payloadFingerprint: fingerprint,
+          httpStatus: response.status,
+          databaseCode: typeof error.code === 'string' && /^[A-Z0-9]{5,12}$/.test(error.code) ? error.code : null,
+          safeMessage: typeof error.message === 'string' && safeMessages.includes(error.message)
+            ? error.message : response.ok ? 'Accepted' : 'Backend message omitted: not in safe allowlist',
+          // HTTP Date has one-second precision; deltas are diagnostic, not a clock correction.
+          recordedAheadOfServerMs: Number.isFinite(serverTime) ? op.recordedAt - serverTime : null,
+          observedAheadOfServerMs: Number.isFinite(serverTime) ? Date.parse(input.observed_at) - serverTime : null,
+          navigatorOnline: isOnline(),
+        });
+      } catch { /* Diagnostics must never affect confirmation or queue retention. */ }
+    }
     if (!response.ok) throw await readQueuedReplayError(response);
     const row: unknown = await response.json();
     if (!row || typeof row !== 'object' || !('id' in row) || typeof row.id !== 'string'
