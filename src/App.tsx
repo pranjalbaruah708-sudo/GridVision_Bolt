@@ -133,7 +133,8 @@ function Shell() {
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
-        .register('/sw.js')
+        .register('/sw.js', { updateViaCache: 'none' })
+        .then((registration) => registration.update())
         .catch(() => undefined);
     }
     void runStorageMaintenance().catch(() => undefined);
