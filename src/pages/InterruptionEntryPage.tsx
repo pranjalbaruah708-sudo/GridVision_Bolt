@@ -43,6 +43,7 @@ import type {
 } from '@/types';
 import { formatCacheAge, readOperationalSnapshot, writeOperationalSnapshot } from '@/services/operationalReadCache';
 import { APP_BACKGROUND_EVENT } from '@/services/platform/runtime';
+import { operationalWriteUserMessage, reportOperationalWriteFailure } from '@/services/operationalWriteErrors';
 
 /* =========================================================
    INTERRUPTION REASONS
@@ -1230,12 +1231,10 @@ export function InterruptionEntryPage({
     } catch (
       e
     ) {
-      console.error('The interruption could not be created.');
+      reportOperationalWriteFailure('The interruption could not be created.', e);
 
       setError(
-        e instanceof Error
-          ? e.message
-          : 'Failed to create interruption.'
+        operationalWriteUserMessage(e, 'Failed to create interruption.')
       );
     } finally {
       setCreating(
@@ -1288,7 +1287,8 @@ export function InterruptionEntryPage({
       setEtrTime(isoToLocalDateTimeInput(nextEtr));
       setEditingEtr(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not update ETR.');
+      reportOperationalWriteFailure('The interruption ETR could not be updated.', cause);
+      setError(operationalWriteUserMessage(cause, 'Could not update ETR.'));
     } finally {
       setUpdatingEtr(false);
     }
@@ -1363,12 +1363,10 @@ export function InterruptionEntryPage({
     } catch (
       e
     ) {
-      console.error('The interruption could not be restored.');
+      reportOperationalWriteFailure('The interruption could not be restored.', e);
 
       setError(
-        e instanceof Error
-          ? e.message
-          : 'Failed to restore feeder.'
+        operationalWriteUserMessage(e, 'Failed to restore feeder.')
       );
     } finally {
       setRestoring(

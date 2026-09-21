@@ -8,6 +8,7 @@ let authListenerStarted = false;
 let pushInitialization: Promise<void> | null = null;
 export const GRIDVISION_NOTIFICATION_OPENED_EVENT = 'gv-notification-opened';
 let pendingNotificationNavigation = false;
+let pendingNotificationPayload: Record<string, string> | null = null;
 const FOREGROUND_CHANNEL_ID = 'gridvision_urgent';
 const displayedForegroundNotifications = new Set<string>();
 const FOREGROUND_DATA_KEYS = [
@@ -15,8 +16,11 @@ const FOREGROUND_DATA_KEYS = [
   'event_time', 'message', 'notification_class', 'source_recorded_at', 'source_synced_at',
 ] as const;
 
-function requestNotificationNavigation(): void {
+function requestNotificationNavigation(payload?: unknown): void {
   pendingNotificationNavigation = true;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    pendingNotificationPayload = Object.fromEntries(Object.entries(payload as Record<string, unknown>).flatMap(([key, value]) => typeof value === 'string' && value.length <= 500 ? [[key, value]] : []));
+  }
   window.dispatchEvent(new Event(GRIDVISION_NOTIFICATION_OPENED_EVENT));
 }
 
@@ -24,6 +28,12 @@ export function consumePendingNotificationNavigation(): boolean {
   if (!pendingNotificationNavigation) return false;
   pendingNotificationNavigation = false;
   return true;
+}
+
+export function consumePendingNotificationPayload(): Record<string, string> | null {
+  const payload = pendingNotificationPayload;
+  pendingNotificationPayload = null;
+  return payload;
 }
 
 function foregroundNotificationKey(notification: { id: string; title?: string; body?: string; data?: unknown }): string {
@@ -316,7 +326,7 @@ async function initializePushNotifications(): Promise<void> {
 
     await PushNotifications.addListener(
       'pushNotificationActionPerformed',
-      () => requestNotificationNavigation()
+      (event) => requestNotificationNavigation(event.notification?.data)
     );
 
     if (isAndroidApp()) {
@@ -324,7 +334,7 @@ async function initializePushNotifications(): Promise<void> {
       // current push-action behavior. No second routing system is introduced.
       await LocalNotifications.addListener(
         'localNotificationActionPerformed',
-        () => requestNotificationNavigation()
+        (event) => requestNotificationNavigation(event.notification?.extra)
       );
     }
 

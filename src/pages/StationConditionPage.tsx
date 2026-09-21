@@ -13,6 +13,7 @@ import {
 } from '@/services/operationalDrafts';
 import { readOperationalSnapshot, writeOperationalSnapshot } from '@/services/operationalReadCache';
 import { APP_RESUMED_EVENT } from '@/services/platform/runtime';
+import { operationalWriteUserMessage, reportOperationalWriteFailure } from '@/services/operationalWriteErrors';
 import type { StationCondition, StationConditionCategory, StationConditionValue } from '@/types/operational';
 
 const categories: StationConditionCategory[] = ['EQUIPMENT', 'STATION_CONDITION', 'DEFECT', 'OTHER'];
@@ -143,8 +144,15 @@ function ConditionWorkspace({ userId, stationId }: { userId: string; stationId: 
         try {
           await retryQueuedOperation(operation.id);
           const remaining = await getQueue(userId);
-          if (alive.current) setMessage(remaining.some(op => op.id === operation.id)
-            ? 'Entry remains on this device. Check its sync status below.' : 'Station condition saved.');
+          const retained = remaining.find(op => op.id === operation.id);
+          if (alive.current) {
+            if (retained?.failureCategory === 'AUTHORIZATION') {
+              setMessage('');
+              setError(retained.lastError ?? 'Entry remains on this device and needs authorization review.');
+            } else {
+              setMessage(retained ? 'Entry remains on this device. Check its sync status below.' : 'Station condition saved.');
+            }
+          }
         } catch { if (alive.current) setMessage('Entry remains safely stored on this device. Sync will retry after access is verified.'); }
       }
       if (alive.current) await refresh();
@@ -161,7 +169,8 @@ function ConditionWorkspace({ userId, stationId }: { userId: string; stationId: 
       await operationalApi.rectifyStationCondition(id);
       if (alive.current) { setMessage('Condition marked Rectified.'); await refresh(); }
     } catch (cause) {
-      if (alive.current) { setError(cause instanceof Error ? cause.message : 'Rectification was not confirmed. Refresh before retrying.'); await refresh(); }
+      reportOperationalWriteFailure('The station condition could not be rectified.', cause);
+      if (alive.current) { setError(operationalWriteUserMessage(cause, 'Rectification was not confirmed. Refresh before retrying.')); await refresh(); }
     } finally { locked.current = false; if (alive.current) setBusy(false); }
   }
 
@@ -171,15 +180,22 @@ function ConditionWorkspace({ userId, stationId }: { userId: string; stationId: 
     try {
       await retryQueuedOperation(id);
       const remaining = await getQueue(userId);
-      if (alive.current) setMessage(remaining.some(op => op.id === id)
-        ? 'Entry remains on this device. Check its sync status below.' : 'Station condition saved.');
+      const retained = remaining.find(op => op.id === id);
+      if (alive.current) {
+        if (retained?.failureCategory === 'AUTHORIZATION') {
+          setMessage('');
+          setError(retained.lastError ?? 'Entry remains on this device and needs authorization review.');
+        } else {
+          setMessage(retained ? 'Entry remains on this device. Check its sync status below.' : 'Station condition saved.');
+        }
+      }
     }
     catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'Could not retry sync.'); }
     finally { locked.current = false; if (alive.current) { setBusy(false); await refresh(); } }
   }
 
   const pendingIds = new Set(pending.map(op => op.clientOperationId));
-  return <div className="min-w-0 space-y-4 p-4 lg:px-0 lg:py-6">
+  return <div className="gv-station-condition-page min-w-0 space-y-4 p-4 lg:px-0 lg:py-6">
     <label className="block text-sm font-semibold text-slate-700">Station
       <select className={inputClass} value={stationId} disabled={busy} onChange={e => setActiveStationId(e.target.value)}>
         {stations.map(station => <option key={station.id} value={station.id}>{station.name}</option>)}

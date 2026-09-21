@@ -23,6 +23,23 @@ const visuals: Record<OperationalEventType, { label: string; group: EventGroup; 
   DUTY_ENDED: { label: 'Shift Duty End', group: 'Shift / Handover', icon: Users, tone: 'bg-cyan-50 text-cyan-800' },
   HANDOVER_SUBMITTED: { label: 'Handover Submitted', group: 'Shift / Handover', icon: ArrowRightLeft, tone: 'bg-indigo-50 text-indigo-700' },
   HANDOVER_ACCEPTED: { label: 'Handover Accepted', group: 'Shift / Handover', icon: ArrowRightLeft, tone: 'bg-indigo-50 text-indigo-700' },
+  DRAFT_CREATED: { label: 'Handover Draft Created', group: 'Shift / Handover', icon: ClipboardCheck, tone: 'bg-slate-100 text-slate-700' },
+  DRAFT_ENTRY_ADDED: { label: 'Draft Entry Added', group: 'Shift / Handover', icon: ClipboardCheck, tone: 'bg-slate-100 text-slate-700' },
+  DRAFT_ENTRY_EDITED: { label: 'Draft Entry Edited', group: 'Shift / Handover', icon: ClipboardCheck, tone: 'bg-slate-100 text-slate-700' },
+  DRAFT_ENTRY_REMOVED: { label: 'Draft Entry Removed', group: 'Shift / Handover', icon: ClipboardCheck, tone: 'bg-slate-100 text-slate-700' },
+  OUTGOING_DUTY_ENDED: { label: 'Outgoing Duty Ended', group: 'Shift / Handover', icon: Users, tone: 'bg-cyan-50 text-cyan-800' },
+  TEAM_HANDOVER_ACCEPTED: { label: 'Team Handover Accepted', group: 'Shift / Handover', icon: ArrowRightLeft, tone: 'bg-emerald-50 text-emerald-700' },
+  INDIVIDUAL_HANDOVER_ACCEPTED: { label: 'Individual Handover Accepted', group: 'Shift / Handover', icon: Users, tone: 'bg-emerald-50 text-emerald-700' },
+  STARTED_WITHOUT_HANDOVER: { label: 'Started Without Handover', group: 'Shift / Handover', icon: AlertTriangle, tone: 'bg-amber-50 text-amber-800' },
+  LATE_HANDOVER_AVAILABLE: { label: 'Late Handover Available', group: 'Shift / Handover', icon: AlertTriangle, tone: 'bg-amber-50 text-amber-800' },
+  LATE_HANDOVER_ACCEPTED: { label: 'Late Handover Accepted', group: 'Shift / Handover', icon: ClipboardCheck, tone: 'bg-emerald-50 text-emerald-700' },
+  AMENDMENT_ADDED: { label: 'Handover Amendment Added', group: 'Shift / Handover', icon: ClipboardCheck, tone: 'bg-violet-50 text-violet-700' },
+  DUTY_END_BLOCKED_PENDING_HANDOVER: { label: 'Duty End Blocked', group: 'Shift / Handover', icon: AlertTriangle, tone: 'bg-red-50 text-red-700' },
+  PROVISIONAL_HANDOVER_RECORDED: { label: 'Provisional Handover Recorded', group: 'Shift / Handover', icon: ClipboardCheck, tone: 'bg-amber-50 text-amber-800' },
+  FINAL_HANDOVER_RELEASED: { label: 'Final Handover Released', group: 'Shift / Handover', icon: ArrowRightLeft, tone: 'bg-indigo-50 text-indigo-700' },
+  UNATTENDED_FINAL_HANDOVER_RELEASED: { label: 'Final Handover Awaiting Incoming Duty', group: 'Shift / Handover', icon: AlertTriangle, tone: 'bg-amber-50 text-amber-800' },
+  FIRST_INCOMING_DUTY_STARTED_AFTER_RELEASE: { label: 'First Incoming Duty Started', group: 'Shift / Handover', icon: Users, tone: 'bg-emerald-50 text-emerald-700' },
+  SHIFT_END_PASSED_HANDOVER_PENDING: { label: 'Shift End Passed — Handover Pending', group: 'Shift / Handover', icon: AlertTriangle, tone: 'bg-red-50 text-red-700' },
 };
 const scopeKey = (option: OperationalScopeOption) => `${option.scope_kind}:${option.scope_id ?? ''}`;
 const pretty = (value: string) => value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());

@@ -5,7 +5,7 @@ import { AppHeader, PageBody, Screen } from '@/components/ui/Page';
 import { DesktopPageHeading } from '@/components/layout/DesktopPageHeading';
 import { useApp } from '@/context/AppContext';
 import { useShiftStationScope } from '@/context/ShiftStationScopeContext';
-import { api, type ShiftRole, type ShiftRosterAssignment, type StationShift, type StationShiftPatternRepeatResult } from '@/services/api';
+import { api, type ShiftRosterAssignment, type StationShift, type StationShiftPatternRepeatResult } from '@/services/api';
 import type { AppRole } from '@/security/permissions';
 
 type ShiftForm = { id: string | null; name: string; start: string; end: string };
@@ -72,7 +72,12 @@ export function ShiftSchedulePage({ role, onBack }: { role: AppRole; onBack: () 
     setError(null);
     try {
       const schedule = await api.getStationShiftSchedule(activeStationId, dateAtMidnight(from), endOfDate(to));
-      if (request === scheduleRequest.current) setShifts(schedule);
+      if (request === scheduleRequest.current) {
+        setShifts([...schedule].sort((left, right) => {
+          const startOrder = new Date(right.scheduled_start).getTime() - new Date(left.scheduled_start).getTime();
+          return startOrder || new Date(right.scheduled_end).getTime() - new Date(left.scheduled_end).getTime();
+        }));
+      }
     } catch (cause) {
       if (request === scheduleRequest.current) setError(errorMessage(cause, 'Could not load the shift schedule.'));
     } finally {
@@ -121,7 +126,9 @@ export function ShiftSchedulePage({ role, onBack }: { role: AppRole; onBack: () 
         planner ? api.getUsersAccessPage({ search: '', role: 'OPERATOR', active: true, officeId: null, stationId: shift.station_id, page: 0, pageSize: 100 }) : Promise.resolve(null),
       ]);
       if (request !== rosterRequest.current) return;
-      setRoster(currentRoster);
+      // Equal-operator shifts do not expose an in-charge role. Saving this
+      // roster writes every member using the equal MEMBER role.
+      setRoster(currentRoster.map((assignment) => ({ ...assignment, duty_role: 'MEMBER' })));
       setCandidates((users?.rows ?? []).map((user) => ({ id: user.id, fullName: user.full_name })));
     } catch (cause) {
       if (request === rosterRequest.current) setRosterError(errorMessage(cause, 'Could not load this shift roster.'));
@@ -167,10 +174,6 @@ export function ShiftSchedulePage({ role, onBack }: { role: AppRole; onBack: () 
     }
   };
 
-  const setAssignmentRole = (userId: string, dutyRole: ShiftRole) => setRoster((current) => current.map((assignment) => ({
-    ...assignment,
-    duty_role: assignment.user_id === userId ? dutyRole : dutyRole === 'IN_CHARGE' && assignment.duty_role === 'IN_CHARGE' ? 'MEMBER' : assignment.duty_role,
-  })));
   const addCandidate = (userId: string) => {
     const candidate = candidates.find((item) => item.id === userId);
     if (!candidate || roster.some((item) => item.user_id === userId) || !rosterShift) return;
@@ -178,14 +181,10 @@ export function ShiftSchedulePage({ role, onBack }: { role: AppRole; onBack: () 
   };
   const saveRoster = async () => {
     if (!rosterShift) return;
-    if (roster.filter((assignment) => assignment.duty_role === 'IN_CHARGE').length > 1) {
-      setRosterError('Only one roster member can be designated Shift In-Charge.');
-      return;
-    }
     setSavingRoster(true);
     setRosterError(null);
     try {
-      const saved = await api.saveStationShiftRoster(rosterShift.id, roster.map((assignment) => ({ userId: assignment.user_id, dutyRole: assignment.duty_role })));
+      const saved = await api.saveStationShiftRoster(rosterShift.id, roster.map((assignment) => ({ userId: assignment.user_id, dutyRole: 'MEMBER' })));
       setRoster(saved);
       await load();
     } catch (cause) {
@@ -213,7 +212,7 @@ export function ShiftSchedulePage({ role, onBack }: { role: AppRole; onBack: () 
     </PageBody>
     {form && <ShiftDialog form={form} saving={savingShift} onChange={setForm} onClose={() => setForm(null)} onSave={() => void saveShift()} />}
     {repeatOpen && <RepeatPatternDialog stationId={activeStationId} defaultFrom={from} defaultTo={to} onClose={() => setRepeatOpen(false)} onRepeat={repeatPattern} />}
-    {rosterShift && <RosterDialog shift={rosterShift} roster={roster} candidates={availableCandidates} loading={rosterLoading} saving={savingRoster} error={rosterError} canEdit={planner && online && rosterShift.status === 'SCHEDULED' && new Date(rosterShift.scheduled_start) > new Date()} onClose={() => setRosterShift(null)} onAdd={addCandidate} onRemove={(userId) => setRoster((current) => current.filter((assignment) => assignment.user_id !== userId))} onRoleChange={setAssignmentRole} onSave={() => void saveRoster()} />}
+    {rosterShift && <RosterDialog shift={rosterShift} roster={roster} candidates={availableCandidates} loading={rosterLoading} saving={savingRoster} error={rosterError} canEdit={planner && online && rosterShift.status === 'SCHEDULED' && new Date(rosterShift.scheduled_start) > new Date()} onClose={() => setRosterShift(null)} onAdd={addCandidate} onRemove={(userId) => setRoster((current) => current.filter((assignment) => assignment.user_id !== userId))} onSave={() => void saveRoster()} />}
   </Screen>;
 }
 
@@ -330,9 +329,9 @@ function ShiftDialog({ form, saving, onChange, onClose, onSave }: { form: ShiftF
   return <Dialog title={form.id ? 'Edit scheduled shift' : 'Schedule a shift'} onClose={onClose}><div className="space-y-3"><label className="block text-xs font-semibold text-slate-600">Shift name<input value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800" /></label><label className="block text-xs font-semibold text-slate-600">Scheduled start<input type="datetime-local" value={form.start} onChange={(event) => onChange({ ...form, start: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800" /></label><label className="block text-xs font-semibold text-slate-600">Scheduled end<input type="datetime-local" value={form.end} onChange={(event) => onChange({ ...form, end: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800" /></label><div className="flex justify-end gap-2 pt-2"><button type="button" onClick={onClose} className="min-h-10 rounded-xl px-3 text-sm font-semibold text-slate-700">Cancel</button><button type="button" onClick={onSave} disabled={saving} className="min-h-10 rounded-xl bg-blue-700 px-4 text-sm font-bold text-white disabled:opacity-60">{saving ? 'Saving…' : 'Save shift'}</button></div></div></Dialog>;
 }
 
-function RosterDialog({ shift, roster, candidates, loading, saving, error, canEdit, onClose, onAdd, onRemove, onRoleChange, onSave }: { shift: StationShift; roster: ShiftRosterAssignment[]; candidates: RosterCandidate[]; loading: boolean; saving: boolean; error: string | null; canEdit: boolean; onClose: () => void; onAdd: (userId: string) => void; onRemove: (userId: string) => void; onRoleChange: (userId: string, role: ShiftRole) => void; onSave: () => void }) {
+function RosterDialog({ shift, roster, candidates, loading, saving, error, canEdit, onClose, onAdd, onRemove, onSave }: { shift: StationShift; roster: ShiftRosterAssignment[]; candidates: RosterCandidate[]; loading: boolean; saving: boolean; error: string | null; canEdit: boolean; onClose: () => void; onAdd: (userId: string) => void; onRemove: (userId: string) => void; onSave: () => void }) {
   const [selected, setSelected] = useState('');
-  return <Dialog title={`Roster · ${shift.shift_name}`} onClose={onClose}><p className="text-sm text-slate-600">{displayDateTime(shift.scheduled_start)}</p>{error && <p role="alert" className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}{loading ? <div className="grid min-h-40 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-blue-600" /></div> : <><div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">{roster.length ? roster.map((assignment) => <div key={assignment.user_id} className="flex flex-wrap items-center gap-2 p-3"><p className="min-w-32 flex-1 text-sm font-semibold text-slate-800">{assignment.full_name}</p>{canEdit ? <select value={assignment.duty_role} onChange={(event) => onRoleChange(assignment.user_id, event.target.value as ShiftRole)} className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"><option value="MEMBER">Member</option><option value="IN_CHARGE">Shift In-Charge</option></select> : <span className="text-sm text-slate-600">{assignment.duty_role === 'IN_CHARGE' ? 'Shift In-Charge' : 'Member'}</span>}{canEdit && <button type="button" onClick={() => onRemove(assignment.user_id)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" aria-label={`Remove ${assignment.full_name}`}><X className="h-4 w-4" /></button>}</div>) : <p className="p-4 text-sm text-slate-600">No roster members have been assigned.</p>}</div>{canEdit && <div className="mt-4 flex gap-2"><select value={selected} onChange={(event) => setSelected(event.target.value)} className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><option value="">Add an authorised station user</option>{candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName}</option>)}</select><button type="button" disabled={!selected} onClick={() => { onAdd(selected); setSelected(''); }} className="rounded-xl border border-blue-200 px-3 text-sm font-semibold text-blue-700 disabled:opacity-60">Add</button></div>}<div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={onClose} className="min-h-10 rounded-xl px-3 text-sm font-semibold text-slate-700">Close</button>{canEdit && <button type="button" disabled={saving} onClick={onSave} className="min-h-10 rounded-xl bg-blue-700 px-4 text-sm font-bold text-white disabled:opacity-60">{saving ? 'Saving…' : 'Save roster'}</button>}</div></>}</Dialog>;
+  return <Dialog title={`Roster · ${shift.shift_name}`} onClose={onClose}><p className="text-sm text-slate-600">{displayDateTime(shift.scheduled_start)}</p>{error && <p role="alert" className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}{loading ? <div className="grid min-h-40 place-items-center"><Loader2 className="h-6 w-6 animate-spin text-blue-600" /></div> : <><div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">{roster.length ? roster.map((assignment) => <div key={assignment.user_id} className="flex flex-wrap items-center gap-2 p-3"><p className="min-w-32 flex-1 text-sm font-semibold text-slate-800">{assignment.full_name}</p><span className="text-sm text-slate-600">Member</span>{canEdit && <button type="button" onClick={() => onRemove(assignment.user_id)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" aria-label={`Remove ${assignment.full_name}`}><X className="h-4 w-4" /></button>}</div>) : <p className="p-4 text-sm text-slate-600">No roster members have been assigned.</p>}</div>{canEdit && <div className="mt-4 flex gap-2"><select value={selected} onChange={(event) => setSelected(event.target.value)} className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><option value="">Add an authorised station user</option>{candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName}</option>)}</select><button type="button" disabled={!selected} onClick={() => { onAdd(selected); setSelected(''); }} className="rounded-xl border border-blue-200 px-3 text-sm font-semibold text-blue-700 disabled:opacity-60">Add</button></div>}<div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={onClose} className="min-h-10 rounded-xl px-3 text-sm font-semibold text-slate-700">Close</button>{canEdit && <button type="button" disabled={saving} onClick={onSave} className="min-h-10 rounded-xl bg-blue-700 px-4 text-sm font-bold text-white disabled:opacity-60">{saving ? 'Saving…' : 'Save roster'}</button>}</div></>}</Dialog>;
 }
 
 function Dialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {

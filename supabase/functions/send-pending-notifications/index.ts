@@ -10,7 +10,7 @@ interface PendingRecipient {
   id: string;
   notification_event_id: string;
   user_id: string;
-  device_token_id: string;
+  device_token_id: string | null;
   status: string;
 }
 
@@ -388,6 +388,22 @@ Deno.serve(async (req) => {
     for (const recipient of recipients as PendingRecipient[]) {
       try {
         console.log("Processing a pending notification recipient.");
+
+        // A null token is a deliberate in-app-only recipient. It must not be
+        // sent to FCM, but it must leave PENDING so the same recipient is not
+        // processed indefinitely on every delivery run.
+        if (!recipient.device_token_id) {
+          await supabaseAdmin
+            .from("notification_recipients")
+            .update({
+              status: "SENT",
+              delivery_message: "In-app notification recorded; no active device token.",
+              sent_at: new Date().toISOString(),
+            })
+            .eq("id", recipient.id);
+          results.push({ recipient_id: recipient.id, success: true, in_app_only: true });
+          continue;
+        }
 
         // ----------------------------------------------
         // Get notification event

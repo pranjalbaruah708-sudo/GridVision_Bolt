@@ -64,6 +64,9 @@ import { ShiftHandoverPage } from '@/pages/ShiftHandoverPage';
 import { ShiftOperationsPage } from '@/pages/ShiftOperationsPage';
 import { OperatorDutyEntryGate } from '@/components/OperatorDutyEntryGate';
 import { OperatorDutyStartupPrompt } from '@/components/OperatorDutyStartupPrompt';
+import { LateHandoverBanner } from '@/components/LateHandoverBanner';
+import { useShiftStationScope } from '@/context/ShiftStationScopeContext';
+import { clearDutyWarningAcknowledgements } from '@/services/operatorDutyWarning';
 
 import { SignInPage } from '@/pages/SignInPage';
 const DevShiftTestTokenPage = import.meta.env.DEV
@@ -81,6 +84,7 @@ import { Loader2 } from 'lucide-react';
 
 import {
   consumePendingNotificationNavigation,
+  consumePendingNotificationPayload,
   deactivateCurrentDeviceToken,
   GRIDVISION_NOTIFICATION_OPENED_EVENT,
 } from '@/pushNotifications';
@@ -91,6 +95,10 @@ const MORE_ROUTE_SHELL_TITLES: Partial<Record<MoreDestination, string>> = {
   'help-about': 'Help & About',
 };
 
+function ShiftHandoverRouteGate({ role, onBack }: { role: AppRole; onBack: () => void }) {
+  const shiftScope = useShiftStationScope();
+  return <OperatorDutyEntryGate role={role} stationId={shiftScope.selectedStationId || null} allowRosteredPreDutyHandover><ShiftHandoverPage onBack={onBack} /></OperatorDutyEntryGate>;
+}
 
 function Shell() {
   const { route, go } = useRouter();
@@ -164,8 +172,16 @@ function Shell() {
   useEffect(() => {
     const openAlertsFromNotification = () => {
       if (!auth.session || !role || !consumePendingNotificationNavigation()) return;
+      const payload = consumePendingNotificationPayload();
+      const message = `${payload?.message ?? ''} ${payload?.notification_class ?? ''}`.toLowerCase();
       setSelectedModule('manual');
-      go({ tab: 'alerts', sub: 'all' });
+      if (message.includes('late handover') || message.includes('late_handover')) {
+        go({ tab: 'more', sub: 'shift-handover' });
+      } else if (message.includes('handover')) {
+        go({ tab: 'more', sub: 'current-shift' });
+      } else {
+        go({ tab: 'alerts', sub: 'all' });
+      }
     };
     window.addEventListener(GRIDVISION_NOTIFICATION_OPENED_EVENT, openAlertsFromNotification);
     openAlertsFromNotification();
@@ -293,6 +309,7 @@ function Shell() {
   const handleSignOut = async () => {
     setQueueSyncAuthorization(null);
     await deactivateCurrentDeviceToken();
+    if (auth.user?.id) clearDutyWarningAcknowledgements(auth.user.id);
     await auth.signOut();
     setSelectedModule(null);
   };
@@ -326,7 +343,8 @@ function Shell() {
 
   const renderRoutedPage = (content: React.ReactNode, active = route.tab) => (
     <ResponsiveAppShell active={active} onNavigate={(tab) => go({ tab })} identity={shellIdentity} onOpenProfile={() => go({ tab: 'more', sub: 'profile' })} onOpenAlerts={() => go({ tab: 'alerts', sub: 'all' })} onSignOut={handleSignOut} route={route} selectedModule={selectedModule ?? 'manual'} onNavigateRoute={go} onOpenModuleSelection={() => setSelectedModule(null)} onSelectModule={(module) => { if (module === 'manual' || module === 'shutdown') { setSelectedModule(module); go({ tab: 'dashboard' }); } }}>
-      <OperatorDutyStartupPrompt role={role} />
+      <OperatorDutyStartupPrompt role={role} onOpenCurrentShift={() => go({ tab: 'more', sub: 'current-shift' })} />
+      <LateHandoverBanner role={role} onReview={() => go({ tab: 'more', sub: 'shift-handover' })} />
       {content}
     </ResponsiveAppShell>
   );
@@ -566,7 +584,7 @@ function Shell() {
     route.tab === 'more' &&
     route.sub === 'operator-entry'
   ) {
-    return renderRoutedPage(<OperatorDutyEntryGate role={role}><OperatorEntryPage onBack={returnToMore} initialReviewOperation={reviewOperation} onReviewConsumed={() => setReviewOperation(null)} /></OperatorDutyEntryGate>, 'more');
+    return renderRoutedPage(<OperatorDutyEntryGate role={role} onOpenCurrentShift={() => go({ tab: 'more', sub: 'current-shift' })} onClose={returnToMore}><OperatorEntryPage onBack={returnToMore} initialReviewOperation={reviewOperation} onReviewConsumed={() => setReviewOperation(null)} /></OperatorDutyEntryGate>, 'more');
   }
 
 
@@ -578,7 +596,7 @@ function Shell() {
     route.tab === 'more' &&
     route.sub === 'interruption-entry'
   ) {
-    return renderRoutedPage(<OperatorDutyEntryGate role={role}><InterruptionEntryPage onBack={returnToMore} /></OperatorDutyEntryGate>, 'more');
+    return renderRoutedPage(<OperatorDutyEntryGate role={role} onOpenCurrentShift={() => go({ tab: 'more', sub: 'current-shift' })} onClose={returnToMore}><InterruptionEntryPage onBack={returnToMore} /></OperatorDutyEntryGate>, 'more');
   }
 
   if (route.tab === 'more' && route.sub === 'operational-summary') {
@@ -588,7 +606,7 @@ function Shell() {
     return renderRoutedPage(<OperationalTimelinePage onBack={returnToMore} />, 'more');
   }
   if (route.tab === 'more' && route.sub === 'station-condition') {
-    return renderRoutedPage(<OperatorDutyEntryGate role={role}><StationConditionPage onBack={returnToMore} /></OperatorDutyEntryGate>, 'more');
+    return renderRoutedPage(<OperatorDutyEntryGate role={role} onOpenCurrentShift={() => go({ tab: 'more', sub: 'current-shift' })} onClose={returnToMore}><StationConditionPage onBack={returnToMore} /></OperatorDutyEntryGate>, 'more');
   }
 
 
@@ -621,7 +639,7 @@ function Shell() {
   }
 
   if (route.tab === 'more' && route.sub === 'shift-handover') {
-    return renderRoutedPage(<OperatorDutyEntryGate role={role}><ShiftHandoverPage onBack={() => go({ tab: 'more', sub: 'current-shift' })} /></OperatorDutyEntryGate>, 'more');
+    return renderRoutedPage(<ShiftHandoverRouteGate role={role} onBack={() => go({ tab: 'more', sub: 'current-shift' })} />, 'more');
   }
 
   if (route.tab === 'more' && route.sub === 'shift-schedule') {

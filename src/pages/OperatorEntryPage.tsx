@@ -41,6 +41,7 @@ import {
 } from "@/services/operationalDrafts";
 import { formatCacheAge, readOperationalSnapshot, writeOperationalSnapshot } from '@/services/operationalReadCache';
 import { APP_BACKGROUND_EVENT } from '@/services/platform/runtime';
+import { operationalWriteUserMessage, reportOperationalWriteFailure } from '@/services/operationalWriteErrors';
 
 /* =========================================================
    PARAMETERS
@@ -51,6 +52,9 @@ const PARAMETERS: {
   label: string;
   unit: string;
   type: "number" | "text";
+  min?: number;
+  max?: number;
+  step?: number;
 }[] = [
   {
     key: "mw",
@@ -79,8 +83,11 @@ const PARAMETERS: {
   {
     key: "powerFactor",
     label: "Power Factor",
-    unit: "",
+    unit: "p.u.",
     type: "number",
+    min: -1,
+    max: 1,
+    step: 0.001,
   },
   {
     key: "frequency",
@@ -1220,6 +1227,21 @@ async function save() {
     return;
   }
 
+  const powerFactor = nullableNumber(
+    values.powerFactor
+  );
+
+  if (
+    values.powerFactor.trim() !== "" &&
+    (powerFactor === null || powerFactor < -1 || powerFactor > 1)
+  ) {
+    setError(
+      "Power Factor must be a decimal between -1.000 and 1.000 (for example, 0.98), not a percentage."
+    );
+
+    return;
+  }
+
   setSaving(true);
   setSaved(false);
   setLastSaveStatus(null);
@@ -1267,9 +1289,7 @@ async function save() {
         ),
 
       power_factor:
-        nullableNumber(
-          values.powerFactor
-        ),
+        powerFactor,
 
       frequency_hz:
         nullableNumber(
@@ -1439,12 +1459,10 @@ const selectedHourStatus =
       2000
     );
   } catch (e) {
-    console.error("The operator entry could not be saved.");
+    reportOperationalWriteFailure("The operator entry could not be saved.", e);
 
     setError(
-      e instanceof Error
-        ? e.message
-        : "Failed to save operator entry."
+      operationalWriteUserMessage(e, "Failed to save operator entry.")
     );
     setLastSaveStatus("SAVE_FAILED");
   } finally {
@@ -2580,6 +2598,18 @@ const selectedHourStatus =
                       "number"
                         ? "decimal"
                         : "text"
+                    }
+
+                    min={
+                      parameter.min
+                    }
+
+                    max={
+                      parameter.max
+                    }
+
+                    step={
+                      parameter.step
                     }
 
                     disabled={

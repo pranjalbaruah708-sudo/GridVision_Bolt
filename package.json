@@ -9,6 +9,8 @@
     "build": "vite build",
     "build:staging": "vite build --mode staging",
     "lint": "eslint .",
+    "test:operational-write-errors": "node --experimental-strip-types --test tests/operationalWriteErrors.test.mjs",
+    "test:duty-warning": "node --experimental-strip-types --test tests/operatorDutyWarning.test.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
   },

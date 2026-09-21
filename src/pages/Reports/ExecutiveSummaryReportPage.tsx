@@ -61,6 +61,7 @@ export function ExecutiveSummaryReportPage({ onBack }: { onBack: () => void }) {
   const summaryCards = useMemo<ReportSummaryCard[]>(() => summary ? [
     { label: 'Peak load', value: formatMw(summary.peak_mw), detail: summary.peak_time ? formatIst(summary.peak_time) : undefined, tone: 'blue' },
     { label: 'Average load', value: formatMw(summary.average_mw), tone: 'blue' },
+    { label: 'Minimum voltage', value: summary.minimum_voltage_kv === null ? 'Not recorded' : `${summary.minimum_voltage_kv.toFixed(2)} kV`, detail: summary.minimum_voltage_time ? formatIst(summary.minimum_voltage_time) : undefined, tone: 'blue' },
     { label: 'Open / total interruptions', value: `${summary.open_interruptions} / ${summary.total_interruptions}`, detail: formatDuration(summary.total_interruption_duration_minutes), tone: summary.open_interruptions ? 'red' : 'green' },
     { label: 'Active / period exceptions', value: `${summary.active_parameter_exceptions} / ${summary.total_parameter_exceptions}`, tone: summary.active_parameter_exceptions ? 'orange' : 'green' },
     { label: 'Data completeness', value: `${summary.completeness_percent.toFixed(1)}%`, detail: `${summary.entered_feeder_hours} / ${summary.expected_feeder_hours} feeder-hours`, tone: summary.completeness_percent >= 90 ? 'green' : 'orange' },

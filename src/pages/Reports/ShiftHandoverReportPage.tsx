@@ -176,26 +176,22 @@ export function ShiftHandoverReportPage({
         csvValue: (row) => row.outgoing_shift_name || '',
       },
       {
-        id: 'outgoingIc',
-        label: 'Outgoing Shift In-Charge',
-        value: (row) =>
-          row.outgoing_in_charge_name || 'Not assigned',
-        csvValue: (row) =>
-          row.outgoing_in_charge_name || 'Not assigned',
-      },
-      {
         id: 'incomingShift',
         label: 'Incoming Shift',
         value: (row) => row.incoming_shift_name || '—',
         csvValue: (row) => row.incoming_shift_name || '',
       },
       {
-        id: 'incomingIc',
-        label: 'Incoming Shift In-Charge',
-        value: (row) =>
-          row.incoming_in_charge_name || 'Not assigned',
-        csvValue: (row) =>
-          row.incoming_in_charge_name || 'Not assigned',
+        id: 'outgoingOperators',
+        label: 'Outgoing Operators',
+        value: (row) => <div className="min-w-64 space-y-1">{row.outgoing_operators.length ? row.outgoing_operators.map((operator) => <p key={operator.user_id} className="whitespace-normal text-xs leading-5">{operatorLine(operator, false)}</p>) : <p>Not recorded</p>}</div>,
+        csvValue: (row) => row.outgoing_operators.map((operator) => operatorLine(operator, false)).join(' | '),
+      },
+      {
+        id: 'incomingOperators',
+        label: 'Incoming Operators / Oversight',
+        value: (row) => <div className="min-w-72 space-y-1">{row.incoming_operators.length ? row.incoming_operators.map((operator) => <p key={operator.user_id} className="whitespace-normal text-xs leading-5">{operatorLine(operator, true)}</p>) : <p>Not recorded</p>}</div>,
+        csvValue: (row) => row.incoming_operators.map((operator) => operatorLine(operator, true)).join(' | '),
       },
       {
         id: 'submittedBy',
@@ -226,6 +222,18 @@ export function ShiftHandoverReportPage({
         csvValue: (row) => formatIst(row.accepted_at),
       },
       {
+        id: 'releaseLifecycle',
+        label: 'V2 Release / Incoming Start',
+        value: (row) => <div className="min-w-64 space-y-1 text-xs leading-5">{releaseLine(row).map((line) => <p key={line}>{line}</p>)}</div>,
+        csvValue: (row) => releaseLine(row).join(' | '),
+      },
+      {
+        id: 'lateSubmittedAt',
+        label: 'Late Handover At',
+        value: (row) => formatIst(row.late_handover_submission_time),
+        csvValue: (row) => formatIst(row.late_handover_submission_time),
+      },
+      {
         id: 'status',
         label: 'Status',
         value: (row) => {
@@ -249,16 +257,16 @@ export function ShiftHandoverReportPage({
         csvValue: (row) => statusLabel(row.status),
       },
       {
-        id: 'notes',
-        label: 'Outgoing Notes',
-        value: (row) => row.outgoing_notes || '—',
-        csvValue: (row) => row.outgoing_notes || '',
+        id: 'entries',
+        label: 'Initial Entries / Amendments',
+        value: (row) => <div className="min-w-72 space-y-1">{row.entries.length ? row.entries.map((entry) => <p key={entry.id} className="whitespace-normal text-xs leading-5">{entryLine(entry)}</p>) : <p>{row.outgoing_notes || '—'}</p>}</div>,
+        csvValue: (row) => row.entries.length ? row.entries.map(entryLine).join(' | ') : row.outgoing_notes || '',
       },
       {
-        id: 'comments',
-        label: 'Acceptance Comments',
-        value: (row) => row.acceptance_comments || '—',
-        csvValue: (row) => row.acceptance_comments || '',
+        id: 'audit',
+        label: 'Audit Timeline',
+        value: (row) => <div className="min-w-64 space-y-1">{row.audit_events.length ? row.audit_events.map((event) => <p key={event.id} className="whitespace-normal text-xs leading-5">{event.event_type.replace(/_/g, ' ')} · {event.actor_name ?? 'System'} · {formatIst(event.occurred_at)}</p>) : <p>Legacy handover</p>}</div>,
+        csvValue: (row) => row.audit_events.map((event) => `${event.event_type}; ${event.actor_name ?? 'System'}; ${formatIst(event.occurred_at)}`).join(' | '),
       },
     ],
     [],
@@ -273,10 +281,9 @@ export function ShiftHandoverReportPage({
       (row) => row.status?.toUpperCase() === 'SUBMITTED',
     ).length;
 
-    const other = Math.max(
-      resource.rows.length - accepted - awaiting,
-      0,
-    );
+    const attention = resource.rows.flatMap((row) => row.incoming_operators).filter((operator) =>
+      ['LATE_PENDING', 'MISSED', 'PENDING', 'STARTED_WITHOUT_HANDOVER', 'NOT_STARTED'].includes(operator.attention_state),
+    ).length;
 
     return [
       {
@@ -295,9 +302,9 @@ export function ShiftHandoverReportPage({
         tone: awaiting ? 'orange' : 'slate',
       },
       {
-        label: 'Other status',
-        value: String(other),
-        tone: 'slate',
+        label: 'Individual attention',
+        value: String(attention),
+        tone: attention ? 'orange' : 'slate',
       },
     ];
   }, [resource.rows]);
@@ -368,4 +375,38 @@ export function ShiftHandoverReportPage({
       )}
     </ReportPageShell>
   );
+}
+
+function operatorLine(operator: ShiftHandoverReportRow['incoming_operators'][number], incoming: boolean): string {
+  const times = incoming
+    ? `${operator.duty_started_at ? `started ${formatIst(operator.duty_started_at)}` : 'not started'}${operator.accepted_at ? `; accepted ${formatIst(operator.accepted_at)}` : ''}`
+    : `${operator.duty_started_at ? `started ${formatIst(operator.duty_started_at)}` : 'not started'}${operator.duty_ended_at ? `; ended ${formatIst(operator.duty_ended_at)}` : operator.still_on_duty ? '; still on duty' : ''}`;
+  const comment = incoming && operator.acceptance_comments ? `; comment: ${operator.acceptance_comments}` : '';
+  const blocked = operator.duty_end_blocked ? '; duty end blocked' : '';
+  return `${operator.operator_name} — ${operator.attention_state.replace(/_/g, ' ')}; ${times}${comment}${blocked}`;
+}
+
+function entryLine(entry: ShiftHandoverReportRow['entries'][number]): string {
+  const content = entry.body || [entry.source_type, entry.source_id].filter(Boolean).join(' ') || 'Source entry';
+  return `${entry.phase}: ${content} — ${entry.author_name}, ${formatIst(entry.created_at)}`;
+}
+
+function releaseLine(row: ShiftHandoverReportRow): string[] {
+  const event = (name: string) => row.audit_events.find((item) => item.event_type === name);
+  const provisional = event('PROVISIONAL_HANDOVER_RECORDED');
+  const released = event('FINAL_HANDOVER_RELEASED');
+  const unattended = event('UNATTENDED_FINAL_HANDOVER_RELEASED');
+  const firstIncoming = event('FIRST_INCOMING_DUTY_STARTED_AFTER_RELEASE');
+  if (!provisional && !released && !unattended && !firstIncoming) return ['Legacy handover'];
+  const lines = [
+    provisional && `Provisional: ${formatIst(provisional.occurred_at)} · ${provisional.actor_name ?? 'Operator'}`,
+    released && `Final release: ${formatIst(released.occurred_at)} · ${released.actor_name ?? 'Operator'}`,
+    unattended && 'Awaiting incoming duty',
+    firstIncoming && `First incoming actual start: ${formatIst(firstIncoming.occurred_at)}`,
+  ].filter(Boolean) as string[];
+  if (released && firstIncoming) {
+    const minutes = Math.max(0, Math.round((new Date(firstIncoming.occurred_at).getTime() - new Date(released.occurred_at).getTime()) / 60000));
+    lines.push(`Unattended duration: ${Math.floor(minutes / 60)}h ${minutes % 60}m`);
+  }
+  return lines;
 }

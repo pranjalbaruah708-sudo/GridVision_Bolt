@@ -32,7 +32,7 @@ body {
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* Mobile safe bottom padding */
-.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.pb-safe { padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px); }
 
 /* Keep authenticated Android screens below the native status bar. Module
    selection renders outside ResponsiveAppShell and retains its own safe area. */
@@ -54,6 +54,79 @@ body {
 
   .gv-android-shell header.sticky {
     top: var(--gv-android-safe-top);
+  }
+
+  /* Keep long handover forms and confirmations usable above the Android IME. */
+  textarea,
+  select,
+  input {
+    scroll-margin-bottom: 7rem;
+  }
+
+  [role="dialog"] {
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* Lifecycle actions stack cleanly on narrow screens without changing labels. */
+  section[class*="border-amber-200"] button,
+  section[class*="border-amber-300"] button {
+    width: 100%;
+  }
+
+  .gv-handover-action {
+    min-width: 0;
+  }
+
+  .gv-handover-action > button {
+    width: 100%;
+  }
+
+  /* Entry workspaces stay within the viewport and leave room for BottomNav. */
+  .gv-operator-entry-page,
+  .gv-interruption-entry-page,
+  .gv-station-condition-page {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: hidden;
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .gv-operator-entry-page input,
+  .gv-operator-entry-page select,
+  .gv-operator-entry-page textarea,
+  .gv-interruption-entry-page input,
+  .gv-interruption-entry-page select,
+  .gv-interruption-entry-page textarea,
+  .gv-station-condition-page input,
+  .gv-station-condition-page select,
+  .gv-station-condition-page textarea {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .gv-operator-entry-page button,
+  .gv-interruption-entry-page button,
+  .gv-station-condition-page button {
+    min-height: 44px;
+  }
+
+  .gv-interruption-workspace {
+    min-width: 0;
+  }
+
+  .gv-open-interruptions {
+    min-width: 0;
+  }
+
+  .gv-open-interruption-card {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .gv-open-interruption-actions {
+    flex-wrap: wrap;
   }
 }
 

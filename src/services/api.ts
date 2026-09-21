@@ -59,6 +59,13 @@ import { recordStorageFailure, recordSyncCompleted, recordSyncStarted } from './
 import { isQueueSyncAuthorized } from './syncAuthorization';
 import { stationConditionCreateArgs } from './operationalApi';
 import { conditionInput } from './stationConditionOffline';
+import {
+  OFFLINE_OPERATIONAL_WRITE_AUTHORIZATION_MESSAGE,
+  OPERATIONAL_WRITE_AUTHORIZATION_MESSAGE,
+  mapOperationalWriteError,
+  offlineOperationalAuthorizationFailure,
+  operationalWriteDiagnostic,
+} from './operationalWriteErrors';
 export type { AppRole } from '@/security/permissions';
 
 export type MyProfile = {
@@ -109,8 +116,18 @@ export type ParameterAlert = {
 export type StationShiftStatus = 'SCHEDULED' | 'ACTIVE' | 'CLOSED' | 'CANCELLED';
 export type ShiftDutyStatus = 'ON_DUTY' | 'ENDED';
 export type ShiftRole = 'MEMBER' | 'IN_CHARGE';
-export type ShiftHandoverStatus = 'DRAFT' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED';
+export type ShiftHandoverStatus = 'DRAFT' | 'PROVISIONAL' | 'SUBMITTED' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED';
 export type ShiftHandoverSourceType = 'INTERRUPTION' | 'PARAMETER_ALERT' | 'LOGBOOK_ENTRY' | 'OPERATIONAL_NOTE';
+export type EqualOperatorHandoverEntryPhase = 'DRAFT' | 'INITIAL' | 'AMENDMENT';
+export type EqualOperatorHandoverEntryKind = 'COMMENT' | 'SOURCE_REFERENCE';
+export type ShiftDutyHandoverSide = 'OUTGOING' | 'INCOMING';
+export type ShiftDutyHandoverIndividualState =
+  | 'SUBMITTED_AND_ENDED'
+  | 'ENDED_LINKED_TO_SUBMITTED_HANDOVER'
+  | 'ACCEPTED_AND_STARTED'
+  | 'STARTED_WITHOUT_HANDOVER'
+  | 'LATE_HANDOVER_REVIEW_REQUIRED'
+  | 'LATE_HANDOVER_ACCEPTED';
 
 export type StationShift = {
   id: string;
@@ -136,6 +153,13 @@ export type ShiftDutySession = {
   status: ShiftDutyStatus;
   created_at: string;
   updated_at: string;
+};
+
+export type ShiftHandoverUnattendedState = {
+  handover_id: string;
+  incoming_shift_id: string;
+  released_at: string;
+  status: 'OPEN' | 'CLOSED';
 };
 
 export type ShiftRosterAssignment = {
@@ -188,8 +212,108 @@ export type ShiftHandover = {
   outgoing_notes: string | null;
   acceptance_comments: string | null;
   snapshot: Record<string, unknown> | null;
+  workflow_version: number;
+  row_version: number;
+  submitted_duty_session_id: string | null;
+  team_accepted_duty_session_id: string | null;
+  initial_finalized_at: string | null;
+  provisional_at?: string | null;
+  provisional_by_user_id?: string | null;
+  final_released_at?: string | null;
+  final_released_by_user_id?: string | null;
+  first_incoming_duty_started_at?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type EqualOperatorHandoverEntry = {
+  id: string;
+  handover_id: string;
+  author_user_id: string;
+  client_entry_id: string | null;
+  entry_kind: EqualOperatorHandoverEntryKind;
+  phase: EqualOperatorHandoverEntryPhase;
+  source_type: ShiftHandoverSourceType | null;
+  source_id: string | null;
+  body: string | null;
+  priority: ShiftHandoverItem['priority'];
+  replaces_entry_id: string | null;
+  finalized_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ShiftDutyHandoverState = {
+  id: string;
+  duty_session_id: string;
+  handover_id: string | null;
+  shift_id: string;
+  station_id: string;
+  user_id: string;
+  side: ShiftDutyHandoverSide;
+  state: ShiftDutyHandoverIndividualState;
+  no_handover_acknowledged_at: string | null;
+  accepted_at: string | null;
+  ended_at: string | null;
+  acceptance_comments: string | null;
+  late_notification_event_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ShiftHandoverAuditEvent = {
+  id: string;
+  handover_id: string | null;
+  station_id: string;
+  shift_id: string | null;
+  duty_session_id: string | null;
+  actor_user_id: string | null;
+  event_type: string;
+  details: Record<string, unknown>;
+  occurred_at: string;
+};
+
+export type EqualOperatorHandoverTransition = {
+  handover: ShiftHandover | null;
+  duty_session: ShiftDutySession;
+  individual_state: ShiftDutyHandoverState;
+  official_submission?: boolean;
+  provisional?: boolean;
+  team_first_acceptance?: boolean;
+  existing_duty_session?: boolean;
+};
+
+export type DutyEndWithoutHandoverResult = {
+  duty_session: ShiftDutySession;
+  reason: 'NO_NEXT_SHIFT_SCHEDULED';
+  note: string | null;
+};
+
+export type EqualOperatorHandoverDetail = {
+  handover: ShiftHandover;
+  entries: EqualOperatorHandoverEntry[];
+  individual_states: ShiftDutyHandoverState[];
+  audit_events: ShiftHandoverAuditEvent[];
+};
+
+export type ShiftHandoverAcceptanceOversightRow = {
+  handover_id: string;
+  station_id: string;
+  station_name: string;
+  outgoing_shift_id: string;
+  outgoing_shift_name: string;
+  incoming_shift_id: string;
+  incoming_shift_name: string;
+  team_status: ShiftHandoverStatus;
+  operator_id: string;
+  operator_name: string;
+  duty_session_id: string | null;
+  duty_started_at: string | null;
+  duty_ended_at: string | null;
+  individual_state: ShiftDutyHandoverIndividualState | null;
+  individually_accepted_at: string | null;
+  acceptance_comments: string | null;
+  attention_state: 'ACCEPTED' | 'LATE_PENDING' | 'MISSED' | 'PENDING' | 'STARTED_WITHOUT_HANDOVER' | 'NOT_STARTED';
 };
 
 export type ShiftHandoverItem = {
@@ -249,7 +373,7 @@ export type ShiftComplianceRow = Omit<StationShift, 'created_at' | 'updated_at'>
 export type OperatorDutyReportRow = {
   id: string; station_id: string; station_name: string; shift_date: string; shift_name: string;
   scheduled_start: string; scheduled_end: string; status: StationShiftStatus; user_id: string;
-  operator_name: string; duty_role: ShiftRole; duty_state: 'CURRENT' | 'UPCOMING';
+  operator_name: string; duty_role: ShiftRole; duty_state: 'OVER' | 'CURRENT' | 'UPCOMING';
 };
 
 export type OrgUnitType = { unit_type: string; hierarchy_rank: number };
@@ -449,6 +573,7 @@ export type PerformanceReportRankingRow = { entity_id: string; entity_name: stri
 
 export type ExecutiveSummaryReport = {
   peak_mw: number | null; peak_time: string | null; average_mw: number | null;
+  minimum_voltage_kv: number | null; minimum_voltage_time: string | null;
   open_interruptions: number; total_interruptions: number; total_interruption_duration_minutes: number;
   active_parameter_exceptions: number; total_parameter_exceptions: number;
   entered_feeder_hours: number; expected_feeder_hours: number; completeness_percent: number;
@@ -550,6 +675,56 @@ export interface ShiftHandoverReportRow {
   submitted_at: string | null;
   accepted_by_name: string | null;
   accepted_at: string | null;
+  workflow_version: number;
+  station_name: string;
+  late_handover_submission_time: string | null;
+  entries: ShiftHandoverReportEntry[];
+  outgoing_operators: ShiftHandoverReportOperator[];
+  incoming_operators: ShiftHandoverReportOperator[];
+  audit_events: ShiftHandoverReportAuditEvent[];
+}
+
+export interface ShiftHandoverReportEntry {
+  id: string;
+  phase: EqualOperatorHandoverEntryPhase;
+  entry_kind: EqualOperatorHandoverEntryKind;
+  source_type: ShiftHandoverSourceType | null;
+  source_id: string | null;
+  body: string | null;
+  priority: ShiftHandoverItem['priority'];
+  author_user_id: string;
+  author_name: string;
+  replaces_entry_id: string | null;
+  created_at: string;
+  updated_at: string;
+  finalized_at: string | null;
+}
+
+export interface ShiftHandoverReportOperator {
+  user_id: string;
+  operator_name: string;
+  rostered: boolean;
+  duty_session_id: string | null;
+  duty_started_at: string | null;
+  duty_ended_at: string | null;
+  still_on_duty: boolean;
+  individual_state: ShiftDutyHandoverIndividualState | null;
+  individual_ended_at?: string | null;
+  accepted_at?: string | null;
+  no_handover_acknowledged_at?: string | null;
+  acceptance_comments?: string | null;
+  attention_state: string;
+  duty_end_blocked?: boolean;
+}
+
+export interface ShiftHandoverReportAuditEvent {
+  id: string;
+  event_type: string;
+  actor_user_id: string | null;
+  actor_name: string | null;
+  duty_session_id: string | null;
+  occurred_at: string;
+  details: Record<string, unknown>;
 }
 
 
@@ -741,6 +916,26 @@ async function getAuthHeaders() {
   };
 }
 
+const OPERATIONAL_WRITE_TABLES = new Set(['log_book_entries', 'interruptions']);
+
+async function restWriteFailure(response: Response, method: 'POST' | 'PATCH', table: string): Promise<unknown> {
+  const responseText = await response.text();
+  let body: PostgrestErrorBody | null = null;
+  try {
+    body = JSON.parse(responseText) as PostgrestErrorBody;
+  } catch {
+    // Preserve the existing non-JSON error handling below.
+  }
+
+  if (OPERATIONAL_WRITE_TABLES.has(table)) {
+    const source = body ? { ...body, status: response.status } : { message: responseText, status: response.status };
+    const mapped = mapOperationalWriteError(source, response.status);
+    if (mapped !== source) return mapped;
+  }
+
+  return new Error(`${method} ${table} failed: ${response.status} ${responseText}`);
+}
+
 /* =========================================================
    REST GET
 ========================================================= */
@@ -887,12 +1082,7 @@ async function restPatch<T>(
   if (
     !res.ok
   ) {
-    const errorText =
-      await res.text();
-
-    throw new Error(
-      `PATCH ${table} failed: ${res.status} ${errorText}`
-    );
+    throw await restWriteFailure(res, 'PATCH', table);
   }
 
   const rows =
@@ -910,10 +1100,10 @@ async function restPatch<T>(
     rows.length ===
       0
   ) {
-    throw new Error(
-      `PATCH ${table} succeeded but no row was updated. ` +
-      `Check the UPDATE RLS policy and record ID.`
-    );
+    if (OPERATIONAL_WRITE_TABLES.has(table)) {
+      throw new Error('The operational record could not be updated. Refresh and try again.');
+    }
+    throw new Error(`PATCH ${table} succeeded but no row was updated.`);
   }
 
   clearCache(
@@ -980,12 +1170,7 @@ async function restPost<T>(
   if (
     !res.ok
   ) {
-    const errorText =
-      await res.text();
-
-    throw new Error(
-      `POST ${table} failed: ${res.status} ${errorText}`
-    );
+    throw await restWriteFailure(res, 'POST', table);
   }
 
   const arr =
@@ -1051,7 +1236,89 @@ function mapShiftHandover(row: Record<string, unknown>): ShiftHandover {
     outgoing_notes: row.outgoing_notes == null ? null : String(row.outgoing_notes),
     acceptance_comments: row.acceptance_comments == null ? null : String(row.acceptance_comments),
     snapshot: row.snapshot && typeof row.snapshot === 'object' && !Array.isArray(row.snapshot) ? row.snapshot as Record<string, unknown> : null,
+    workflow_version: Number(row.workflow_version ?? 1), row_version: Number(row.row_version ?? 1),
+    submitted_duty_session_id: row.submitted_duty_session_id == null ? null : String(row.submitted_duty_session_id),
+    team_accepted_duty_session_id: row.team_accepted_duty_session_id == null ? null : String(row.team_accepted_duty_session_id),
+    initial_finalized_at: row.initial_finalized_at == null ? null : String(row.initial_finalized_at),
+    provisional_at: row.provisional_at == null ? null : String(row.provisional_at),
+    provisional_by_user_id: row.provisional_by_user_id == null ? null : String(row.provisional_by_user_id),
+    final_released_at: row.final_released_at == null ? null : String(row.final_released_at),
+    final_released_by_user_id: row.final_released_by_user_id == null ? null : String(row.final_released_by_user_id),
+    first_incoming_duty_started_at: row.first_incoming_duty_started_at == null ? null : String(row.first_incoming_duty_started_at),
     created_at: String(row.created_at), updated_at: String(row.updated_at),
+  };
+}
+
+function mapEqualOperatorHandoverEntry(row: Record<string, unknown>): EqualOperatorHandoverEntry {
+  return {
+    id: String(row.id), handover_id: String(row.handover_id), author_user_id: String(row.author_user_id),
+    client_entry_id: row.client_entry_id == null ? null : String(row.client_entry_id),
+    entry_kind: String(row.entry_kind) as EqualOperatorHandoverEntryKind,
+    phase: String(row.phase) as EqualOperatorHandoverEntryPhase,
+    source_type: row.source_type == null ? null : String(row.source_type) as ShiftHandoverSourceType,
+    source_id: row.source_id == null ? null : String(row.source_id), body: row.body == null ? null : String(row.body),
+    priority: row.priority == null ? null : String(row.priority) as ShiftHandoverItem['priority'],
+    replaces_entry_id: row.replaces_entry_id == null ? null : String(row.replaces_entry_id),
+    finalized_at: row.finalized_at == null ? null : String(row.finalized_at),
+    created_at: String(row.created_at), updated_at: String(row.updated_at),
+  };
+}
+
+function mapShiftDutyHandoverState(row: Record<string, unknown>): ShiftDutyHandoverState {
+  return {
+    id: String(row.id), duty_session_id: String(row.duty_session_id),
+    handover_id: row.handover_id == null ? null : String(row.handover_id),
+    shift_id: String(row.shift_id), station_id: String(row.station_id), user_id: String(row.user_id),
+    side: String(row.side) as ShiftDutyHandoverSide, state: String(row.state) as ShiftDutyHandoverIndividualState,
+    no_handover_acknowledged_at: row.no_handover_acknowledged_at == null ? null : String(row.no_handover_acknowledged_at),
+    accepted_at: row.accepted_at == null ? null : String(row.accepted_at),
+    ended_at: row.ended_at == null ? null : String(row.ended_at),
+    acceptance_comments: row.acceptance_comments == null ? null : String(row.acceptance_comments),
+    late_notification_event_id: row.late_notification_event_id == null ? null : String(row.late_notification_event_id),
+    created_at: String(row.created_at), updated_at: String(row.updated_at),
+  };
+}
+
+function mapReportOperator(row: Record<string, unknown>): ShiftHandoverReportOperator {
+  return {
+    user_id: String(row.user_id), operator_name: String(row.operator_name ?? 'Operator'),
+    rostered: Boolean(row.rostered), duty_session_id: row.duty_session_id == null ? null : String(row.duty_session_id),
+    duty_started_at: row.duty_started_at == null ? null : String(row.duty_started_at),
+    duty_ended_at: row.duty_ended_at == null ? null : String(row.duty_ended_at),
+    still_on_duty: Boolean(row.still_on_duty),
+    individual_state: row.individual_state == null ? null : String(row.individual_state) as ShiftDutyHandoverIndividualState,
+    individual_ended_at: row.individual_ended_at == null ? null : String(row.individual_ended_at),
+    accepted_at: row.accepted_at == null ? null : String(row.accepted_at),
+    no_handover_acknowledged_at: row.no_handover_acknowledged_at == null ? null : String(row.no_handover_acknowledged_at),
+    acceptance_comments: row.acceptance_comments == null ? null : String(row.acceptance_comments),
+    attention_state: String(row.attention_state ?? 'UNKNOWN'),
+    duty_end_blocked: Boolean(row.duty_end_blocked),
+  };
+}
+
+function mapShiftHandoverAuditEvent(row: Record<string, unknown>): ShiftHandoverAuditEvent {
+  return {
+    id: String(row.id), handover_id: row.handover_id == null ? null : String(row.handover_id),
+    station_id: String(row.station_id), shift_id: row.shift_id == null ? null : String(row.shift_id),
+    duty_session_id: row.duty_session_id == null ? null : String(row.duty_session_id),
+    actor_user_id: row.actor_user_id == null ? null : String(row.actor_user_id), event_type: String(row.event_type),
+    details: row.details && typeof row.details === 'object' && !Array.isArray(row.details) ? row.details as Record<string, unknown> : {},
+    occurred_at: String(row.occurred_at),
+  };
+}
+
+function mapEqualOperatorTransition(value: unknown): EqualOperatorHandoverTransition {
+  const row = value as Record<string, unknown>;
+  const handover = row.handover && typeof row.handover === 'object' && !Array.isArray(row.handover)
+    ? mapShiftHandover(row.handover as Record<string, unknown>) : null;
+  return {
+    handover,
+    duty_session: mapShiftDutySession(row.duty_session as Record<string, unknown>),
+    individual_state: mapShiftDutyHandoverState(row.individual_state as Record<string, unknown>),
+    ...(row.official_submission == null ? {} : { official_submission: Boolean(row.official_submission) }),
+    ...(row.provisional == null ? {} : { provisional: Boolean(row.provisional) }),
+    ...(row.team_first_acceptance == null ? {} : { team_first_acceptance: Boolean(row.team_first_acceptance) }),
+    ...(row.existing_duty_session == null ? {} : { existing_duty_session: Boolean(row.existing_duty_session) }),
   };
 }
 
@@ -1189,11 +1456,187 @@ export const api = {
     return mapShiftHandover(data as unknown as Record<string, unknown>);
   },
 
+  async getOrCreateEqualOperatorHandover(outgoingShiftId: string, incomingShiftId: string): Promise<ShiftHandover> {
+    const { data, error } = await supabase.rpc('get_or_create_equal_operator_handover_v2', {
+      p_outgoing_shift_id: outgoingShiftId,
+      p_incoming_shift_id: incomingShiftId,
+    });
+    if (error) throw error;
+    return mapShiftHandover(data as unknown as Record<string, unknown>);
+  },
+
+  async saveEqualOperatorHandoverEntry(input: {
+    handoverId: string;
+    entryId?: string | null;
+    clientEntryId: string;
+    entryKind: EqualOperatorHandoverEntryKind;
+    sourceType?: ShiftHandoverSourceType | null;
+    sourceId?: string | null;
+    body?: string | null;
+    priority?: ShiftHandoverItem['priority'];
+    expectedHandoverVersion?: number | null;
+  }): Promise<EqualOperatorHandoverEntry> {
+    const { data, error } = await supabase.rpc('save_equal_operator_handover_entry_v2', {
+      p_handover_id: input.handoverId,
+      p_entry_id: input.entryId ?? null,
+      p_client_entry_id: input.clientEntryId,
+      p_entry_kind: input.entryKind,
+      p_source_type: input.sourceType ?? null,
+      p_source_id: input.sourceId ?? null,
+      p_body: input.body ?? null,
+      p_priority: input.priority ?? null,
+      p_expected_handover_version: input.expectedHandoverVersion ?? null,
+    });
+    if (error) throw error;
+    return mapEqualOperatorHandoverEntry(data as unknown as Record<string, unknown>);
+  },
+
+  async deleteEqualOperatorHandoverEntry(handoverId: string, entryId: string, idempotencyKey: string): Promise<boolean> {
+    const { data, error } = await supabase.rpc('delete_equal_operator_handover_entry_v2', {
+      p_handover_id: handoverId, p_entry_id: entryId, p_idempotency_key: idempotencyKey,
+    });
+    if (error) throw error;
+    return Boolean(data);
+  },
+
+  async endDutyAndHandoverShift(input: {
+    dutySessionId: string;
+    incomingShiftId: string;
+    idempotencyKey: string;
+    finalComment?: string | null;
+  }): Promise<EqualOperatorHandoverTransition> {
+    const { data, error } = await supabase.rpc('end_duty_and_handover_shift_v2', {
+      p_duty_session_id: input.dutySessionId,
+      p_incoming_shift_id: input.incomingShiftId,
+      p_idempotency_key: input.idempotencyKey,
+      p_final_comment: input.finalComment ?? null,
+    });
+    if (error) throw error;
+    return mapEqualOperatorTransition(data);
+  },
+
+  async endDutyWithoutNextShift(input: {
+    dutySessionId: string;
+    idempotencyKey: string;
+    note?: string | null;
+  }): Promise<DutyEndWithoutHandoverResult> {
+    const { data, error } = await supabase.rpc('end_duty_without_next_shift_v2', {
+      p_duty_session_id: input.dutySessionId,
+      p_idempotency_key: input.idempotencyKey,
+      p_note: input.note ?? null,
+    });
+    if (error) throw error;
+    const row = data as Record<string, unknown>;
+    return {
+      duty_session: mapShiftDutySession(row.duty_session as Record<string, unknown>),
+      reason: 'NO_NEXT_SHIFT_SCHEDULED',
+      note: row.note == null ? null : String(row.note),
+    };
+  },
+
+  async reviewHandoverAndStartDuty(input: {
+    shiftId: string;
+    handoverId?: string | null;
+    acknowledgeNoHandover?: boolean;
+    acceptanceComments?: string | null;
+    idempotencyKey: string;
+  }): Promise<EqualOperatorHandoverTransition> {
+    const { data, error } = await supabase.rpc('review_handover_and_start_duty_v2', {
+      p_shift_id: input.shiftId,
+      p_handover_id: input.handoverId ?? null,
+      p_acknowledge_no_handover: input.acknowledgeNoHandover ?? false,
+      p_acceptance_comments: input.acceptanceComments ?? null,
+      p_idempotency_key: input.idempotencyKey,
+    });
+    if (error) throw error;
+    return mapEqualOperatorTransition(data);
+  },
+
+  async acceptLateShiftHandover(input: {
+    dutySessionId: string;
+    handoverId: string;
+    acceptanceComments?: string | null;
+    idempotencyKey: string;
+  }): Promise<EqualOperatorHandoverTransition> {
+    const { data, error } = await supabase.rpc('accept_late_shift_handover_v2', {
+      p_duty_session_id: input.dutySessionId,
+      p_handover_id: input.handoverId,
+      p_acceptance_comments: input.acceptanceComments ?? null,
+      p_idempotency_key: input.idempotencyKey,
+    });
+    if (error) throw error;
+    return mapEqualOperatorTransition(data);
+  },
+
+  async addShiftHandoverAmendment(input: {
+    handoverId: string;
+    body: string;
+    replacesEntryId?: string | null;
+    clientEntryId: string;
+  }): Promise<EqualOperatorHandoverEntry> {
+    const { data, error } = await supabase.rpc('add_shift_handover_amendment_v2', {
+      p_handover_id: input.handoverId, p_body: input.body,
+      p_replaces_entry_id: input.replacesEntryId ?? null, p_client_entry_id: input.clientEntryId,
+    });
+    if (error) throw error;
+    return mapEqualOperatorHandoverEntry(data as unknown as Record<string, unknown>);
+  },
+
+  async getEqualOperatorHandover(handoverId: string): Promise<EqualOperatorHandoverDetail> {
+    const { data, error } = await supabase.rpc('get_equal_operator_handover_v2', { p_handover_id: handoverId });
+    if (error) throw error;
+    const row = data as unknown as Record<string, unknown>;
+    return {
+      handover: mapShiftHandover(row.handover as Record<string, unknown>),
+      entries: rows(row.entries).map(mapEqualOperatorHandoverEntry),
+      individual_states: rows(row.individual_states).map(mapShiftDutyHandoverState),
+      audit_events: rows(row.audit_events).map(mapShiftHandoverAuditEvent),
+    };
+  },
+
+  async getShiftHandoverAcceptanceOversight(input: {
+    stationId?: string | null;
+    from: string;
+    to: string;
+    limit?: number;
+  }): Promise<ShiftHandoverAcceptanceOversightRow[]> {
+    const { data, error } = await supabase.rpc('get_shift_handover_acceptance_oversight_v2', {
+      p_station_id: input.stationId ?? null, p_from: input.from, p_to: input.to, p_limit: input.limit ?? 500,
+    });
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      handover_id: String(row.handover_id), station_id: String(row.station_id), station_name: String(row.station_name),
+      outgoing_shift_id: String(row.outgoing_shift_id), outgoing_shift_name: String(row.outgoing_shift_name),
+      incoming_shift_id: String(row.incoming_shift_id), incoming_shift_name: String(row.incoming_shift_name),
+      team_status: String(row.team_status) as ShiftHandoverStatus,
+      operator_id: String(row.operator_id), operator_name: String(row.operator_name),
+      duty_session_id: row.duty_session_id == null ? null : String(row.duty_session_id),
+      duty_started_at: row.duty_started_at == null ? null : String(row.duty_started_at),
+      duty_ended_at: row.duty_ended_at == null ? null : String(row.duty_ended_at),
+      individual_state: row.individual_state == null ? null : String(row.individual_state) as ShiftDutyHandoverIndividualState,
+      individually_accepted_at: row.individually_accepted_at == null ? null : String(row.individually_accepted_at),
+      acceptance_comments: row.acceptance_comments == null ? null : String(row.acceptance_comments),
+      attention_state: String(row.attention_state) as ShiftHandoverAcceptanceOversightRow['attention_state'],
+    }));
+  },
+
   async getCurrentStationShift(stationId: string): Promise<StationShift | null> {
     const { data, error } = await supabase.rpc('get_current_station_shift', { p_station_id: stationId });
     if (error) throw error;
     const row = Array.isArray(data) ? data[0] : data;
     return row ? mapStationShift(row as Record<string, unknown>) : null;
+  },
+
+  async getMyV2HandoverUnattended(stationId: string): Promise<ShiftHandoverUnattendedState | null> {
+    const { data, error } = await supabase.rpc('get_my_v2_handover_unattended', { p_station_id: stationId });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row ? {
+      handover_id: String(row.handover_id),
+      incoming_shift_id: String(row.incoming_shift_id),
+      released_at: String(row.released_at),
+      status: String(row.status) as ShiftHandoverUnattendedState['status'],
+    } : null;
   },
 
   async getMyShiftDutySession(shiftId: string): Promise<ShiftDutySession | null> {
@@ -1264,7 +1707,7 @@ export const api = {
       id: String(row.id), station_id: String(row.station_id), station_name: String(row.station_name), shift_date: String(row.shift_date), shift_name: String(row.shift_name),
       scheduled_start: String(row.scheduled_start), scheduled_end: String(row.scheduled_end), status: String(row.status) as StationShiftStatus,
       user_id: String(row.user_id), operator_name: String(row.operator_name), duty_role: String(row.duty_role) as ShiftRole,
-      duty_state: String(row.duty_state) === 'CURRENT' ? 'CURRENT' as const : 'UPCOMING' as const,
+      duty_state: String(row.duty_state) === 'OVER' ? 'OVER' as const : String(row.duty_state) === 'CURRENT' ? 'CURRENT' as const : 'UPCOMING' as const,
     }));
   },
 
@@ -1351,7 +1794,7 @@ async getStationShiftHandoverReport(
 ): Promise<ShiftHandoverReportRow[]> {
 
   const { data, error } = await supabase.rpc(
-    'get_station_shift_handover_report',
+    'get_shift_handover_report_v2',
     {
   p_station_id: stationId,
   p_from: from,
@@ -1362,49 +1805,43 @@ async getStationShiftHandoverReport(
 
   if (error) throw error;
 
-  const rows = (data ?? []) as Array<{
-    id: string;
-    station_id: string;
-    outgoing_shift_id: string;
-    incoming_shift_id: string;
-    outgoing_shift_date: string;
-    incoming_shift_date: string;
-    outgoing_notes: string | null;
-    acceptance_comments: string | null;
-    created_at: string;
-    updated_at: string;
-  }>;
-
-  if (!rows.length) {
-    return [];
-  }
-
-  const accountability = await getHandoverAccountability(
-    rows.map((row) => row.id),
-  );
-
-  return rows.map((row) => {
-    const audit = accountability.get(row.id);
-
+  return (data ?? []).map((item: Record<string, unknown>) => {
+    const row = (item.payload ?? item) as Record<string, unknown>;
     return {
-      ...row,
-      status: audit?.status ?? 'UNKNOWN',
-      outgoing_shift_name:
-        audit?.outgoing_shift_name ?? 'Outgoing shift',
-      incoming_shift_name:
-        audit?.incoming_shift_name ?? 'Incoming shift',
-      outgoing_in_charge_name:
-        audit?.outgoing_in_charge_name ?? null,
-      incoming_in_charge_name:
-        audit?.incoming_in_charge_name ?? null,
-      submitted_by_name:
-        audit?.submitted_by_name ?? null,
-      submitted_at:
-        audit?.submitted_at ?? null,
-      accepted_by_name:
-        audit?.accepted_by_name ?? null,
-      accepted_at:
-        audit?.accepted_at ?? null,
+      id: String(row.id), station_id: String(row.station_id), station_name: String(row.station_name ?? ''),
+      workflow_version: Number(row.workflow_version ?? 1),
+      outgoing_shift_id: String(row.outgoing_shift_id), incoming_shift_id: String(row.incoming_shift_id),
+      outgoing_shift_date: String(row.outgoing_shift_date), incoming_shift_date: String(row.incoming_shift_date),
+      outgoing_shift_name: String(row.outgoing_shift_name ?? 'Outgoing shift'), incoming_shift_name: String(row.incoming_shift_name ?? 'Incoming shift'),
+      outgoing_in_charge_name: null, incoming_in_charge_name: null,
+      outgoing_notes: row.outgoing_notes == null ? null : String(row.outgoing_notes),
+      acceptance_comments: row.acceptance_comments == null ? null : String(row.acceptance_comments),
+      submitted_by_name: row.submitted_by_name == null ? null : String(row.submitted_by_name),
+      submitted_at: row.submitted_at == null ? null : String(row.submitted_at),
+      accepted_by_name: row.accepted_by_name == null ? null : String(row.accepted_by_name),
+      accepted_at: row.accepted_at == null ? null : String(row.accepted_at),
+      late_handover_submission_time: row.late_handover_submission_time == null ? null : String(row.late_handover_submission_time),
+      status: String(row.status ?? 'UNKNOWN'), created_at: String(row.created_at), updated_at: String(row.updated_at),
+      entries: rows(row.entries).map((entry) => ({
+        id: String(entry.id), phase: String(entry.phase) as EqualOperatorHandoverEntryPhase,
+        entry_kind: String(entry.entry_kind) as EqualOperatorHandoverEntryKind,
+        source_type: entry.source_type == null ? null : String(entry.source_type) as ShiftHandoverSourceType,
+        source_id: entry.source_id == null ? null : String(entry.source_id), body: entry.body == null ? null : String(entry.body),
+        priority: entry.priority == null ? null : String(entry.priority) as ShiftHandoverItem['priority'],
+        author_user_id: String(entry.author_user_id), author_name: String(entry.author_name ?? 'Operator'),
+        replaces_entry_id: entry.replaces_entry_id == null ? null : String(entry.replaces_entry_id),
+        created_at: String(entry.created_at), updated_at: String(entry.updated_at), finalized_at: entry.finalized_at == null ? null : String(entry.finalized_at),
+      })),
+      outgoing_operators: rows(row.outgoing_operators).map(mapReportOperator),
+      incoming_operators: rows(row.incoming_operators).map(mapReportOperator),
+      audit_events: rows(row.audit_events).map((audit) => ({
+        id: String(audit.id), event_type: String(audit.event_type),
+        actor_user_id: audit.actor_user_id == null ? null : String(audit.actor_user_id),
+        actor_name: audit.actor_name == null ? null : String(audit.actor_name),
+        duty_session_id: audit.duty_session_id == null ? null : String(audit.duty_session_id),
+        occurred_at: String(audit.occurred_at),
+        details: audit.details && typeof audit.details === 'object' && !Array.isArray(audit.details) ? audit.details as Record<string, unknown> : {},
+      })),
     };
   });
 },
@@ -2234,6 +2671,8 @@ async getExecutiveSummaryReport(
   return {
     peak_mw: row?.peak_mw === null || row?.peak_mw === undefined ? null : Number(row.peak_mw), peak_time: row?.peak_time ?? null,
     average_mw: row?.average_mw === null || row?.average_mw === undefined ? null : Number(row.average_mw),
+    minimum_voltage_kv: row?.minimum_voltage_kv === null || row?.minimum_voltage_kv === undefined ? null : Number(row.minimum_voltage_kv),
+    minimum_voltage_time: row?.minimum_voltage_time ?? null,
     open_interruptions: Number(row?.open_interruptions ?? 0), total_interruptions: Number(row?.total_interruptions ?? 0), total_interruption_duration_minutes: Number(row?.total_interruption_duration_minutes ?? 0),
     active_parameter_exceptions: Number(row?.active_parameter_exceptions ?? 0), total_parameter_exceptions: Number(row?.total_parameter_exceptions ?? 0),
     entered_feeder_hours: Number(row?.entered_feeder_hours ?? 0), expected_feeder_hours: Number(row?.expected_feeder_hours ?? 0), completeness_percent: Number(row?.completeness_percent ?? 0),
@@ -3868,7 +4307,7 @@ async function runHistoricalInterruptionPair(addOp: QueuedOp, restoreOp: QueuedO
   return id;
 }
 
-function queuedFailureMetadata(cause: unknown, operation: QueuedOp): Pick<QueuedOp, 'failureCategory' | 'syncState' | 'lastError' | 'lastAttemptAt'> & Partial<Pick<QueuedOp, 'lastHttpStatus' | 'lastDatabaseCode'>> {
+function queuedFailureMetadata(cause: unknown, operation: QueuedOp): Pick<QueuedOp, 'failureCategory' | 'syncState' | 'lastError' | 'lastAttemptAt'> & Partial<Pick<QueuedOp, 'lastHttpStatus' | 'lastDatabaseCode' | 'lastDiagnostic'>> {
   const status = cause instanceof QueuedReplayError ? cause.status : undefined;
   const databaseCode = cause instanceof QueuedReplayError ? cause.postgresCode ?? undefined : undefined;
   let failureCategory: SyncFailureCategory = 'UNKNOWN';
@@ -3879,10 +4318,18 @@ function queuedFailureMetadata(cause: unknown, operation: QueuedOp): Pick<Queued
   else if (status === 408 || status === 429 || (status !== undefined && status >= 500)) failureCategory = 'TRANSIENT';
   else if (status === 400 || status === 422 || databaseCode?.startsWith('22') || ['23502', '23503', '23514'].includes(databaseCode ?? '')) failureCategory = 'VALIDATION';
 
+  const dutyAuthorizationFailure = databaseCode === '42501';
+  const authorization = dutyAuthorizationFailure
+    ? offlineOperationalAuthorizationFailure(cause, status)
+    : null;
   const lastError = failureCategory === 'TRANSIENT'
     ? 'GridVision could not reach the server. It will retry when connectivity is available.'
     : failureCategory === 'AUTHORIZATION'
-      ? 'Your access changed before this record could synchronize. The record remains safely stored on this device.'
+      ? dutyAuthorizationFailure
+        ? operation.entryMode === 'OFFLINE'
+          ? OFFLINE_OPERATIONAL_WRITE_AUTHORIZATION_MESSAGE
+          : OPERATIONAL_WRITE_AUTHORIZATION_MESSAGE
+        : 'Your access changed before this record could synchronize. The record remains safely stored on this device.'
       : failureCategory === 'CONFLICT' && operation.table === 'interruptions'
         ? 'This feeder already has an open interruption on the server. Review the current interruption before retrying.'
         : failureCategory === 'CONFLICT' && operation.table === 'log_book_entries'
@@ -3899,6 +4346,7 @@ function queuedFailureMetadata(cause: unknown, operation: QueuedOp): Pick<Queued
     lastAttemptAt: Date.now(),
     lastHttpStatus: status,
     lastDatabaseCode: databaseCode?.slice(0, 20),
+    lastDiagnostic: authorization?.diagnostic.technicalMessage ?? undefined,
   };
 }
 
@@ -4045,10 +4493,17 @@ const IDEMPOTENT_OPERATION_TABLES = new Set(['log_book_entries', 'interruptions'
 
 type PostgrestErrorBody = {
   code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
 };
 
 class QueuedReplayError extends Error {
-  constructor(readonly status: number, readonly postgresCode: string | null) {
+  constructor(
+    readonly status: number,
+    readonly postgresCode: string | null,
+    readonly diagnosticMessage: string | null,
+  ) {
     super(`Queued operation replay failed with HTTP ${status}`);
     this.name = 'QueuedReplayError';
   }
@@ -4126,7 +4581,12 @@ async function readQueuedReplayError(response: Response): Promise<QueuedReplayEr
   } catch {
     // Non-JSON failures remain ordinary retryable replay errors.
   }
-  return new QueuedReplayError(response.status, typeof body?.code === 'string' ? body.code : null);
+  const diagnostic = operationalWriteDiagnostic(body, response.status);
+  return new QueuedReplayError(
+    response.status,
+    typeof body?.code === 'string' ? body.code : null,
+    diagnostic.technicalMessage,
+  );
 }
 
 async function confirmedClientOperationDuplicateId(op: QueuedOp, error: QueuedReplayError, ownerUserId: string): Promise<string | null> {

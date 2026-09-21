@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { isOnline } from './offline';
 import { getHandoverAccountability } from './handoverAccountability';
+import { mapOperationalWriteError } from './operationalWriteErrors';
 import type {
   CreateStationConditionInput, OperationalQuery, OperationalScopeOption,
   OperationalSummary, OperationalTimelineEvent, StationCondition,
@@ -29,13 +30,13 @@ export function stationConditionCreateArgs(input: CreateStationConditionInput) {
 export const operationalApi = {
   async createStationCondition(input: CreateStationConditionInput): Promise<StationCondition> {
     const { data, error } = await supabase.rpc('create_station_condition', stationConditionCreateArgs(input));
-    if (error) throw error;
+    if (error) throw mapOperationalWriteError(error);
     return data as StationCondition;
   },
   async rectifyStationCondition(id: string): Promise<StationCondition> {
     if (!isOnline()) throw new Error('Rectification requires an online connection.');
     const { data, error } = await supabase.rpc('rectify_station_condition', { p_id: id });
-    if (error) throw error;
+    if (error) throw mapOperationalWriteError(error);
     return data as StationCondition;
   },
   async getStationCondition(id: string): Promise<StationCondition | null> {

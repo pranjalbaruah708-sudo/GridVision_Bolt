@@ -54,12 +54,14 @@ export type QueuedOp = {
   lastAttemptAt?: number;
   lastHttpStatus?: number;
   lastDatabaseCode?: string;
+  /** Sanitized backend detail retained for diagnostics; never render this value in operator UI. */
+  lastDiagnostic?: string;
   enqueuedAt: number;
   ownerUserId?: string;
 };
 
 export type EnqueueOpInput = Pick<QueuedOp, 'method' | 'table'> & Partial<Omit<QueuedOp, 'id' | 'method' | 'table' | 'enqueuedAt'>>;
-export type QueuedOpUpdate = Partial<Pick<QueuedOp, 'serverEntityId' | 'dependsOn' | 'retryCount' | 'lastError' | 'failureCategory' | 'syncState' | 'lastAttemptAt' | 'lastHttpStatus' | 'lastDatabaseCode'>>;
+export type QueuedOpUpdate = Partial<Pick<QueuedOp, 'serverEntityId' | 'dependsOn' | 'retryCount' | 'lastError' | 'failureCategory' | 'syncState' | 'lastAttemptAt' | 'lastHttpStatus' | 'lastDatabaseCode' | 'lastDiagnostic'>>;
 
 export type AuthorizedOperationalScopeCache = {
   version: typeof AUTHORIZED_SCOPE_SCHEMA_VERSION;
@@ -226,6 +228,7 @@ export function normalizeQueuedOp(value: unknown, fallbackTimestamp = Date.now()
     ...(typeof value.lastAttemptAt === 'number' && Number.isFinite(value.lastAttemptAt) && value.lastAttemptAt > 0 ? { lastAttemptAt: value.lastAttemptAt } : {}),
     ...(typeof value.lastHttpStatus === 'number' && Number.isInteger(value.lastHttpStatus) ? { lastHttpStatus: value.lastHttpStatus } : {}),
     ...(asOptionalString(value.lastDatabaseCode) ? { lastDatabaseCode: asOptionalString(value.lastDatabaseCode)?.slice(0, 20) } : {}),
+    ...(asOptionalString(value.lastDiagnostic) ? { lastDiagnostic: asOptionalString(value.lastDiagnostic)?.slice(0, 500) } : {}),
     enqueuedAt,
     ...(asOptionalString(value.ownerUserId) ? { ownerUserId: asOptionalString(value.ownerUserId) } : {}),
   };
@@ -370,7 +373,7 @@ export async function enqueueOrConsolidateLogBookOp(op: EnqueueOpInput): Promise
         operationType: existing.method === 'POST' ? 'ADD_LOG_ENTRY' : 'UPDATE_LOG_ENTRY', eventTime: op.eventTime ?? existing.eventTime,
         recordedAt: op.recordedAt ?? Date.now(), entryMode: 'OFFLINE', retryCount: 0, lastError: null,
         syncState: 'PENDING', failureCategory: undefined, lastAttemptAt: undefined,
-        lastHttpStatus: undefined, lastDatabaseCode: undefined }, existing.enqueuedAt);
+        lastHttpStatus: undefined, lastDatabaseCode: undefined, lastDiagnostic: undefined }, existing.enqueuedAt);
       if (!result) throw new Error('Invalid offline log-book operation.');
       queue[index] = result;
       return queue;
@@ -446,7 +449,7 @@ export async function updateQueuedInterruptionAddEtr(localEntityId: string, etr:
         || operation.localEntityId !== localEntityId || !isRecord(operation.body)) return operation;
       updated = { ...operation, body: { ...operation.body, etr }, retryCount: 0, lastError: null,
         failureCategory: undefined, syncState: 'PENDING', lastAttemptAt: undefined,
-        lastHttpStatus: undefined, lastDatabaseCode: undefined };
+        lastHttpStatus: undefined, lastDatabaseCode: undefined, lastDiagnostic: undefined };
       return updated;
     }));
   });
