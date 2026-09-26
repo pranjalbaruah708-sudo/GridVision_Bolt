@@ -6,5 +6,5 @@ const TONES: Record<ShutdownStatus, string> = {
 const LABELS: Record<ShutdownStatus, string> = { PENDING_APPROVAL: 'Pending Approval', APPROVED: 'Approved', REJECTED: 'Rejected', CANCELLED: 'Cancelled' };
 
 export function ShutdownStatusBadge({ status }: { status: ShutdownStatus }) {
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${TONES[status]}`}>{LABELS[status]}</span>;
+  return <span className={`inline-flex shrink-0 self-start items-center justify-center whitespace-nowrap rounded-full px-2.5 py-1 text-center text-[11px] font-semibold leading-4 ring-1 ring-inset ${TONES[status]}`}>{LABELS[status]}</span>;
 }

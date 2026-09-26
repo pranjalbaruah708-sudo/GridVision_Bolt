@@ -49,6 +49,16 @@ export function hasCapability(role: AppRole | null | undefined, capability: Capa
   return role ? ROLE_CAPABILITIES[role].includes(capability) : false;
 }
 
+/** Shutdown initiation is an operational action for operators and officers only. */
+export function canInitiateShutdown(role: AppRole | null | undefined): boolean {
+  return role === 'OPERATOR' || role === 'FIELD_OFFICER';
+}
+
+/** Approval remains available to officers and administrative supervisors. */
+export function canApproveShutdown(role: AppRole | null | undefined): boolean {
+  return role === 'FIELD_OFFICER' || role === 'ADMIN' || role === 'SUPER_ADMIN';
+}
+
 export function getRoleLabel(role: AppRole | null | undefined): string {
   if (role === 'FIELD_OFFICER') return 'Officer';
   if (role === 'SUPER_ADMIN') return 'Super Admin';

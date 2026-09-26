@@ -537,6 +537,7 @@ function IncomingEqualOperatorHandoverPage({ onBack, handover: candidate, availa
   const [lateFailed, setLateFailed] = useState(false);
   const [updatedByAnotherOperator, setUpdatedByAnotherOperator] = useState(false);
   const detailVersionRef = useRef<number | null>(null);
+  const detailSignatureRef = useRef<string | null>(null);
   const candidateId = candidate?.id ?? null;
 
   const refreshHandover = useCallback(async (background = false) => {
@@ -546,16 +547,27 @@ function IncomingEqualOperatorHandoverPage({ onBack, handover: candidate, availa
     try {
       const detail = await api.getEqualOperatorHandover(candidateId);
       if (request !== requestRef.current) return;
+      const signature = JSON.stringify({
+        status: detail.handover.status,
+        updatedAt: detail.handover.updated_at,
+        entries: detail.entries.map((entry) => [entry.id, entry.updated_at]),
+        states: detail.individual_states.map((state) => [state.id, state.state, state.accepted_at]),
+      });
+      if (background && !starting && !acceptingLate && detailSignatureRef.current !== null && detailSignatureRef.current !== signature) {
+        setUpdatedByAnotherOperator(true);
+      }
+      detailSignatureRef.current = signature;
       setHandover(detail.handover); setEntries(detail.entries); setIndividualStates(detail.individual_states);
     } catch (cause) {
       if (request === requestRef.current) setError(message(cause, 'Could not load the submitted handover. Refresh and retry.'));
     } finally { if (request === requestRef.current && !background) setLoading(false); }
-  }, [candidateId]);
+  }, [acceptingLate, candidateId, starting]);
 
   useEffect(() => {
     commandKeyRef.current = null;
     lateAcceptanceKeyRef.current = null;
     detailVersionRef.current = null;
+    detailSignatureRef.current = null;
     setError(null); setFailed(false); setLateFailed(false); setStartedWithoutHandover(false); setStartedAndAccepted(false); setUpdatedByAnotherOperator(false);
     void refreshHandover();
   }, [candidateId, refreshHandover]);
@@ -567,7 +579,6 @@ function IncomingEqualOperatorHandoverPage({ onBack, handover: candidate, availa
     if (detailVersionRef.current === availabilityVersion) return;
     detailVersionRef.current = availabilityVersion;
     if (!candidateId) return;
-    setUpdatedByAnotherOperator(true);
     void refreshHandover(true);
   }, [availabilityVersion, candidateId, refreshHandover]);
 
@@ -797,11 +808,14 @@ function OutgoingEqualOperatorHandoverPage({ onBack }: { onBack: () => void }) {
     if (entryKind === 'SOURCE_REFERENCE' && !selectedSource) { setError('Choose an operational source entry before adding it.'); return; }
     setEntryBusy(true); setError(null);
     try {
-      // Version-2 keeps an immutable per-entry identity. Replacing an edited
-      // draft entry is therefore a delete followed by a new attributed entry.
-      if (editingEntry) await api.deleteEqualOperatorHandoverEntry(handover.id, editingEntry.id, crypto.randomUUID());
       await api.saveEqualOperatorHandoverEntry({
-        handoverId: handover.id, clientEntryId: crypto.randomUUID(), entryKind,
+        handoverId: handover.id,
+        // The V2 write contract edits a draft entry atomically when its id is
+        // supplied. A delete-then-create sequence increments row_version in
+        // between requests and makes the replacement stale.
+        entryId: editingEntry?.id ?? null,
+        clientEntryId: crypto.randomUUID(),
+        entryKind,
         body: entryKind === 'COMMENT' ? entryBody.trim() : null,
         sourceType: entryKind === 'SOURCE_REFERENCE' ? selectedSource!.sourceType : null,
         sourceId: entryKind === 'SOURCE_REFERENCE' ? selectedSource!.sourceId : null,
@@ -809,10 +823,13 @@ function OutgoingEqualOperatorHandoverPage({ onBack }: { onBack: () => void }) {
         expectedHandoverVersion: handover.row_version,
       });
       clearComposer();
-      await refresh();
+      // The mutation is server-confirmed already. Do not keep the composer in
+      // its busy state while the bounded detail refresh is waiting for a slow
+      // network response.
+      void refresh(false, true);
     } catch (cause) {
       setError(message(cause, editingEntry ? 'The draft entry could not be replaced. Refresh the shared draft and retry.' : 'The draft entry could not be added. Refresh the shared draft and retry.'));
-      await refresh();
+      void refresh(false, true);
     } finally { setEntryBusy(false); }
   };
 

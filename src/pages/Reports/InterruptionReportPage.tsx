@@ -147,6 +147,7 @@ export function InterruptionReportPage({ onBack }: { onBack: () => void }) {
     { id: 'cause', label: 'Cause', value: (row) => row.cause || 'Not recorded', csvValue: (row) => row.cause },
     { id: 'status', label: 'Status', value: (row) => <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${statusTone(row.current_status)}`}>{row.current_status}</span>, csvValue: (row) => row.current_status },
     { id: 'etr', label: 'ETR (IST)', value: (row) => row.etr ? formatIst(row.etr) : 'Not recorded', csvValue: (row) => row.etr ? formatIst(row.etr) : '' },
+    { id: 'operator', label: 'Operator', value: (row) => row.operator_name || 'Not recorded', csvValue: (row) => row.operator_name || '' },
     { id: 'remarks', label: 'Remarks', value: (row) => row.remarks || 'Not recorded', csvValue: (row) => row.remarks },
   ], [feederById, stationById]);
 

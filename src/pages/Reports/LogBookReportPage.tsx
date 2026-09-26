@@ -133,7 +133,7 @@ export function LogBookReportPage({ onBack }: { onBack: () => void }) {
     { id: 'tap', label: 'Tap position', align: 'right', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.tap_position), csvValue: (row) => row.tap_position },
     { id: 'weather', label: 'Weather', className: 'lg:whitespace-nowrap', value: (row) => valueText(row.weather), csvValue: (row) => row.weather },
     { id: 'remarks', label: 'Remarks', className: 'lg:min-w-64 lg:max-w-80 lg:whitespace-normal', value: (row) => valueText(row.remarks), csvValue: (row) => row.remarks },
-    { id: 'operator', label: 'Operator', className: 'lg:min-w-36 lg:whitespace-nowrap', value: (row) => valueText(row.operator_id), csvValue: (row) => row.operator_id },
+    { id: 'operator', label: 'Operator', className: 'lg:min-w-36 lg:whitespace-nowrap', value: (row) => valueText(row.operator_name), csvValue: (row) => row.operator_name ?? '' },
   ], [feederById, stationById]);
 
   const summaryCards = useMemo<ReportSummaryCard[]>(() => {

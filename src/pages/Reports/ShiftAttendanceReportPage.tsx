@@ -22,6 +22,7 @@ import {
   ReportFilters,
   ReportPageShell,
   ReportPreview,
+  ReportSummaryCards,
   type ReportColumn,
   type ReportFilterValues,
   type ReportResource,
@@ -140,6 +141,22 @@ function durationText(minutes: number | null): string {
   }
 
   return `${hours} hr ${remainingMinutes} min`;
+}
+
+function dutyDurationAsOf(
+  row: AttendanceReportRow,
+  asOf: Date
+): number | null {
+  const startedAt = new Date(row.started_at).getTime();
+  const endedAt = row.ended_at
+    ? new Date(row.ended_at).getTime()
+    : asOf.getTime();
+
+  if (Number.isNaN(startedAt) || Number.isNaN(endedAt) || endedAt < startedAt) {
+    return null;
+  }
+
+  return Math.round((endedAt - startedAt) / 60000);
 }
 
 function getDaysBetween(
@@ -645,6 +662,28 @@ export function ShiftAttendanceReportPage({
       resource.rows,
     ]);
 
+  const dutyHoursSummary =
+    useMemo(() => {
+      const asOf = resource.generatedAt ?? new Date();
+      const durations = resource.rows
+        .map((row) => dutyDurationAsOf(row, asOf))
+        .filter((minutes): minutes is number => minutes !== null);
+      const totalMinutes = durations.reduce(
+        (total, minutes) => total + minutes,
+        0
+      );
+
+      return {
+        totalMinutes,
+        averageMinutes: durations.length > 0
+          ? Math.round(totalMinutes / durations.length)
+          : null,
+      };
+    }, [
+      resource.generatedAt,
+      resource.rows,
+    ]);
+
   const activeFilters =
     loadedReport?.filters ?? filters;
 
@@ -701,6 +740,7 @@ export function ShiftAttendanceReportPage({
          stations,
             feeders: [],
             operatorOptions,
+            requireStation: true,
             }}
           generating={resource.loading}
           onChange={setFilters}
@@ -748,7 +788,7 @@ export function ShiftAttendanceReportPage({
           />
 
           <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               <div className="flex items-start gap-2">
                 <CalendarDays className="mt-0.5 h-4 w-4 text-blue-700" />
 
@@ -821,6 +861,40 @@ export function ShiftAttendanceReportPage({
                       ).length
                     }{' '}
                     records
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <Clock3 className="mt-0.5 h-4 w-4 text-blue-700" />
+
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Total duty hours
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-slate-800">
+                    {durationText(
+                      dutyHoursSummary.totalMinutes
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <Clock3 className="mt-0.5 h-4 w-4 text-green-700" />
+
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Avg. duty hours
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-slate-800">
+                    {dutyHoursSummary.averageMinutes === null
+                      ? 'Not recorded'
+                      : durationText(
+                        dutyHoursSummary.averageMinutes
+                      )}
                   </p>
                 </div>
               </div>

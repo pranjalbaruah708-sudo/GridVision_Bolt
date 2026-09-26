@@ -11,6 +11,12 @@ const BOTTOM = PAGE_HEIGHT - 16;
 
 type PdfDocument = jsPDF & { lastAutoTable?: { finalY: number } };
 export type PdfExportResult = PdfFileResult;
+export type PdfTableExport = {
+  headers: string[];
+  rows: string[][];
+  alignments?: Array<'left' | 'right'>;
+  density?: 'normal' | 'compact' | 'wide';
+};
 
 function reportDate(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -55,6 +61,44 @@ function activeFilters(content: HTMLElement): string[] {
 
 async function savePdf(doc: jsPDF, fileName: string): Promise<PdfExportResult> {
   return persistPdfFile(fileName, doc.output('arraybuffer'), () => doc.save(fileName));
+}
+
+/** Creates a real PDF on native platforms, avoiding Android WebView print previews. */
+export async function exportTableToPdf(title: string, table: PdfTableExport): Promise<PdfExportResult> {
+  const doc = new jsPDF({ orientation: table.headers.length > 6 ? 'landscape' : 'portrait', unit: 'mm', format: 'a4', compress: true }) as PdfDocument;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 10;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(15, 23, 42);
+  doc.text(cleanText(title), margin, margin + 2);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Generated: ${generatedAt()} IST`, margin, margin + 8);
+  const fontSize = table.density === 'wide' ? 5.7 : table.density === 'compact' ? 6.7 : 7.5;
+  autoTable(doc, {
+    startY: margin + 13,
+    head: [table.headers.map(cleanText)],
+    body: table.rows.map((row) => row.map(cleanText)),
+    margin: { left: margin, right: margin, bottom: 15 },
+    theme: 'grid',
+    styles: { font: 'helvetica', fontSize, cellPadding: 1.5, overflow: 'linebreak' },
+    headStyles: { fillColor: [13, 71, 161], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [241, 245, 249] },
+    columnStyles: Object.fromEntries(table.alignments?.map((alignment, index) => [index, { halign: alignment }]) ?? []),
+    rowPageBreak: 'avoid',
+    showHead: 'everyPage',
+    didDrawPage: ({ pageNumber }) => {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text('GridVision', margin, pageHeight - 7);
+      doc.text(`Page ${pageNumber}`, pageWidth - margin, pageHeight - 7, { align: 'right' });
+    },
+  });
+  return savePdf(doc, safeFileName(title));
 }
 
 function tableData(table: HTMLTableElement): { head: string[][]; body: string[][] } {

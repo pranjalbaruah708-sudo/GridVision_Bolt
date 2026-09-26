@@ -52,7 +52,20 @@ export function ResponsiveAppShell({ active, onNavigate, children, identity, onO
       </div>
 
       <div className="lg:hidden">
-        <BottomNav active={active} onNavigate={onNavigate} />
+        <BottomNav
+          active={active}
+          onNavigate={onNavigate}
+          module={selectedModule}
+          onShutdownNavigate={(target) => {
+            if (target === 'dashboard') onNavigateRoute({ tab: 'dashboard' });
+            if (target === 'requests') onNavigateRoute({ tab: 'dashboard', sub: 'my-requests' });
+            if (target === 'initiate') onNavigateRoute({ tab: 'dashboard', sub: 'shutdown-request-new' });
+            if (target === 'reports') onNavigateRoute({ tab: 'dashboard', sub: 'shutdown-reports' });
+          }}
+          onOpenModuleSelection={onOpenModuleSelection}
+          role={identity.role}
+          shutdownActive={selectedModule === 'shutdown' ? (route.sub === 'my-requests' ? 'requests' : route.sub === 'shutdown-reports' ? 'reports' : route.sub?.startsWith('shutdown-request-') ? 'initiate' : 'dashboard') : undefined}
+        />
       </div>
     </>
   );

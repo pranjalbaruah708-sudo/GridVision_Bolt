@@ -27,7 +27,7 @@ export function OperatorDutyReportPage({ onBack }: { onBack: () => void }) {
     { id: 'operator', label: 'Operator', value: r => r.operator_name, csvValue: r => r.operator_name },
     { id: 'station', label: 'Station', value: r => r.station_name, csvValue: r => r.station_name },
     { id: 'shift', label: 'Shift', value: r => r.shift_name, csvValue: r => r.shift_name },
-    { id: 'timing', label: 'Scheduled duty', value: r => `${formatIst(r.scheduled_start)} – ${formatIst(r.scheduled_end)}`, csvValue: r => `${r.scheduled_start} – ${r.scheduled_end}` },
+    { id: 'timing', label: 'Scheduled duty (IST)', value: r => `${formatIst(r.scheduled_start)} – ${formatIst(r.scheduled_end)}`, csvValue: r => `${formatIst(r.scheduled_start)} – ${formatIst(r.scheduled_end)}` },
     { id: 'role', label: 'Role', value: r => r.duty_role === 'IN_CHARGE' ? 'Shift In-Charge' : 'Member', csvValue: r => r.duty_role },
     { id: 'state', label: 'Duty status', value: r => r.duty_state === 'OVER' ? 'Over' : r.duty_state === 'CURRENT' ? 'Current' : 'Upcoming', csvValue: r => r.duty_state },
   ], []);

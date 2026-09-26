@@ -11,6 +11,8 @@ import type {
   ReportColumn,
 } from './types';
 import { downloadCsvFile, openReportPrintWindow, printReportElement } from '@/services/platform/webReportFiles';
+import { isNativeApp } from '@/services/platform/runtime';
+import { exportTableToPdf } from '@/utils/pdfExport';
 
 const LARGE_PRINT_ROW_COUNT = 1000;
 
@@ -100,6 +102,23 @@ export function ReportActions<Row>({
   async function openPrint() {
     if (!contentRef.current || unavailable) return;
     if (totalRows > LARGE_PRINT_ROW_COUNT && !window.confirm(`This report contains ${totalRows.toLocaleString('en-IN')} records and may create a very large PDF. Continue?`)) return;
+    if (isNativeApp()) {
+      setExporting(true);
+      try {
+        const allRows = await resolveRows();
+        await exportTableToPdf(title, {
+          headers: columns.map((column) => column.label),
+          rows: allRows.map((row) => columns.map((column) => reportCell(row, column))),
+          alignments: columns.map((column) => column.align ?? 'left'),
+          density: columns.length >= 12 ? 'wide' : columns.length >= 7 ? 'compact' : 'normal',
+        });
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : 'The report PDF could not be prepared.');
+      } finally {
+        setExporting(false);
+      }
+      return;
+    }
     const targetWindow = openReportPrintWindow(title);
     if (!targetWindow) {
       window.alert('The print window was blocked. Allow pop-ups for GridVision and try again.');
@@ -133,7 +152,7 @@ export function ReportActions<Row>({
         columns.map((column) => csvCell(column.label)).join(','),
         ...allRows.map((row) => columns.map((column) => csvCell(column.csvValue?.(row))).join(',')),
       ].join('\n');
-      downloadCsvFile(csv, `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'gridvision-report'}.csv`);
+      await downloadCsvFile(csv, `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'gridvision-report'}.csv`);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'The complete CSV could not be prepared.');
     } finally {
@@ -142,7 +161,7 @@ export function ReportActions<Row>({
   }
 
   return <div className="flex flex-wrap gap-2" data-report-exclude>
-    <button type="button" onClick={() => void openPrint()} disabled={unavailable} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"><Printer className="h-4 w-4" />{exporting ? 'Preparing...' : 'Print'}</button>
+    {!isNativeApp() && <button type="button" onClick={() => void openPrint()} disabled={unavailable} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50"><Printer className="h-4 w-4" />{exporting ? 'Preparing...' : 'Print'}</button>}
     <button type="button" onClick={() => void openPrint()} disabled={unavailable} aria-label={exporting ? 'Preparing complete report' : 'Save report as PDF'} title="Save as PDF" className={`inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${showPdfLabel ? 'lg:w-9 lg:px-0' : 'w-9 px-0'} ${primaryPdf ? 'lg:border-blue-700 lg:bg-blue-700 lg:text-white lg:hover:bg-blue-800' : ''}`}><FileDown className="h-4 w-4" />{showPdfLabel && <span className="lg:hidden">{exporting ? 'Preparing...' : 'PDF'}</span>}</button>
     <button type="button" onClick={() => void exportCsv()} disabled={unavailable} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />{exporting ? 'Preparing...' : 'CSV'}</button>
   </div>;

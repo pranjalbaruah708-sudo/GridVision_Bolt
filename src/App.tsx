@@ -5,7 +5,7 @@ import { useRouter, type Route } from '@/hooks/useRouter';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/services/api';
 import { hasSupabaseInviteCallback, hasSupabaseRecoveryCallback } from '@/services/supabase';
-import { canAccessRoute, getRoleLabel, type AppRole } from '@/security/permissions';
+import { canAccessRoute, canInitiateShutdown, getRoleLabel, type AppRole } from '@/security/permissions';
 
 import { ResponsiveAppShell } from '@/components/layout/ResponsiveAppShell';
 import type { DesktopShellIdentity } from '@/components/layout/ResponsiveAppShell';
@@ -492,6 +492,9 @@ function Shell() {
       return renderRoutedPage(<ShutdownReportsPage onBack={() => go({ tab: 'dashboard' })} />, 'dashboard');
     }
     if (route.tab === 'dashboard' && route.sub?.startsWith('shutdown-request-')) {
+      if (route.sub === 'shutdown-request-new' && !canInitiateShutdown(role)) {
+        return renderRoutedPage(<ShutdownDashboardPage onBack={returnToModuleSelection} onViewRequest={(id) => go({ tab: 'dashboard', sub: `shutdown-request-${id}` })} />, 'dashboard');
+      }
       const requestId = route.sub === 'shutdown-request-new' ? undefined : route.sub.replace('shutdown-request-', '');
       return renderRoutedPage(<ShutdownRequestPage requestId={requestId} onCancel={() => go({ tab: 'dashboard', sub: 'my-requests' })} onComplete={() => go({ tab: 'dashboard', sub: 'my-requests' })} />, 'dashboard');
     }

@@ -1327,6 +1327,11 @@ export function InterruptionEntryPage({
       return;
     }
 
+    if (new Date(restoreTime).getTime() > Date.now()) {
+      setError('Restore time cannot be in the future.');
+      return;
+    }
+
     setRestoring(
       true
     );
@@ -3557,6 +3562,12 @@ export function InterruptionEntryPage({
                   ) =>
                     setRestoreTime(
                       e.target.value
+                    )
+                  }
+
+                  max={
+                    isoToLocalDateTimeInput(
+                      new Date().toISOString()
                     )
                   }
 

@@ -3891,10 +3891,10 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     if (accessibleStationIds.length === 0) return { rows: [], total: 0 };
     let query = supabase
       .from('scoped_interruption_report_entries')
-      .select('id,station_id,feeder_id,operator_id,interruption_start,interruption_end,duration_minutes,cause,remarks,current_status,etr,created_at,updated_at', { count: 'exact' })
+      .select('id,station_id,feeder_id,operator_id,operator_name,interruption_start,interruption_end,duration_minutes,cause,remarks,current_status,etr,created_at,updated_at', { count: 'exact' })
       .in('station_id', accessibleStationIds)
-      .gte('interruption_start', startIso)
       .lt('interruption_start', endIso)
+      .or(`current_status.eq.OPEN,interruption_start.gte.${startIso},interruption_end.gte.${startIso}`)
       .order('interruption_start', { ascending: false })
       .range(page * pageSize, page * pageSize + pageSize - 1);
     if (stationId) query = query.eq('station_id', stationId);
@@ -3960,7 +3960,7 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     let query = supabase
       .from('scoped_logbook_report_entries')
       .select(
-        'id,station_id,feeder_id,operator_id,actual_event_time,mw,mvar,voltage_kv,current_a,power_factor,frequency_hz,transformer_temp_c,oil_level_percent,tap_position,weather,remarks,created_at,updated_at',
+        'id,station_id,feeder_id,operator_id,operator_name,actual_event_time,mw,mvar,voltage_kv,current_a,power_factor,frequency_hz,transformer_temp_c,oil_level_percent,tap_position,weather,remarks,created_at,updated_at',
         { count: 'exact' }
       )
       .in('station_id', accessibleStationIds)

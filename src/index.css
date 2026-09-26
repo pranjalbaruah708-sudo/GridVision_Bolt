@@ -362,3 +362,41 @@ body {
     grid-row: 1 / span 2;
   }
 }
+
+/* Shutdown request has a compact inline header; keep it aligned with the
+   shared blue Station Management header until that page is moved to the
+   common shell. */
+.min-h-screen.bg-\[\#f5f8fc\].pb-24 > .mx-auto.max-w-\[1200px\] > .flex.items-center.gap-3:first-child {
+  margin: -1.5rem -1rem 1.25rem;
+  padding: 1rem;
+  color: #fff;
+  background: linear-gradient(to right, #0b4695, #07336f);
+  border-bottom: 1px solid #1e40af;
+}
+
+.min-h-screen.bg-\[\#f5f8fc\].pb-24 > .mx-auto.max-w-\[1200px\] > .flex.items-center.gap-3:first-child p {
+  color: #dbeafe;
+}
+
+.min-h-screen.bg-\[\#f5f8fc\].pb-24 > .mx-auto.max-w-\[1200px\] > .flex.items-center.gap-3:first-child button {
+  color: #dbeafe;
+  border-color: transparent;
+  background: transparent;
+}
+
+.min-h-screen.bg-\[\#f5f8fc\].pb-24 > .mx-auto.max-w-\[1200px\] > .flex.items-center.gap-3:first-child button:hover {
+  background: rgb(255 255 255 / 10%);
+  color: #fff;
+}
+
+/* Dashboard KPI status labels use the same compact badge treatment as the
+   shutdown report filters and result rows. */
+.min-h-screen.bg-\[\#f5f8fc\].pb-24 > .mx-auto.max-w-\[1500px\] > .grid.grid-cols-2 > div:nth-child(2) > p:first-child,
+.min-h-screen.bg-\[\#f5f8fc\].pb-24 > .mx-auto.max-w-\[1500px\] > .grid.grid-cols-2 > div:nth-child(3) > p:first-child,
+.min-h-screen.bg-\[\#f5f8fc\].pb-24 > .mx-auto.max-w-\[1500px\] > .grid.grid-cols-2 > div:nth-child(4) > p:first-child {
+  display: inline-flex;
+  border-radius: 9999px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+}

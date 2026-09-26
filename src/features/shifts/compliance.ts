@@ -47,7 +47,10 @@ export function deriveShiftCompliance(shift: ShiftComplianceRow, now = Date.now(
 }
 
 export function handoverLabel(status: ShiftHandoverStatus | undefined): string {
-  if (!status) return 'Not started';
-  if (status === 'SUBMITTED') return 'Awaiting acceptance';
-  return status[0] + status.slice(1).toLowerCase();
+  if (!status) return 'Handover Not Started';
+  if (status === 'DRAFT') return 'Draft Handover';
+  if (status === 'PROVISIONAL') return 'Provisional Handover';
+  if (status === 'SUBMITTED') return 'Handover Awaiting Acceptance';
+  if (status === 'ACCEPTED') return 'Handover Accepted';
+  return `Handover ${status[0]}${status.slice(1).toLowerCase()}`;
 }

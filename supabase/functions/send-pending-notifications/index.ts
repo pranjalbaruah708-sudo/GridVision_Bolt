@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-gridvision-scheduler-secret",
 };
 
 interface PendingRecipient {
@@ -40,9 +40,24 @@ function constantTimeEqual(left: string, right: string): boolean {
   return difference === 0;
 }
 
-function isServiceRoleRequest(request: Request, serviceRoleKey: string): boolean {
+function isAuthorizedSchedulerRequest(
+  request: Request,
+  serviceRoleKey: string,
+  schedulerSecret: string,
+): boolean {
   const authorization = request.headers.get("Authorization") ?? "";
-  return constantTimeEqual(authorization, `Bearer ${serviceRoleKey}`);
+  const providedSchedulerSecret =
+    request.headers.get("x-gridvision-scheduler-secret") ?? "";
+
+  const validServiceRole =
+    serviceRoleKey.length > 0 &&
+    constantTimeEqual(authorization, `Bearer ${serviceRoleKey}`);
+
+  const validSchedulerSecret =
+    schedulerSecret.length > 0 &&
+    constantTimeEqual(providedSchedulerSecret, schedulerSecret);
+
+  return validServiceRole || validSchedulerSecret;
 }
 
 function notificationTitle(event: NotificationEvent): string | null {
@@ -207,6 +222,11 @@ Deno.serve(async (req) => {
         "SUPABASE_SERVICE_ROLE_KEY",
       );
 
+    const notificationSchedulerSecret =
+      Deno.env.get(
+        "GRIDVISION_NOTIFICATION_SCHEDULER_SECRET",
+      );
+
     const firebaseProjectId =
       Deno.env.get("FIREBASE_PROJECT_ID");
 
@@ -223,6 +243,7 @@ Deno.serve(async (req) => {
     if (
       !supabaseUrl ||
       !supabaseServiceRoleKey ||
+      !notificationSchedulerSecret ||
       !firebaseProjectId ||
       !firebaseClientEmail ||
       !firebasePrivateKey
@@ -232,7 +253,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (!isServiceRoleRequest(req, supabaseServiceRoleKey)) {
+    if (
+      !isAuthorizedSchedulerRequest(
+        req,
+        supabaseServiceRoleKey,
+        notificationSchedulerSecret,
+      )
+    ) {
       return new Response(JSON.stringify({ success: false, error: "Unauthorised" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -47,7 +47,7 @@ export function ShutdownReportsPage({ onBack }: { onBack: () => void }) {
       const data = await allRows();
       const headers = ['SD No.', 'Station', 'Equipment / Feeder', 'Shutdown Type', 'Requested Date', 'Planned Start', 'Expected Restoration', 'Requested By', 'Decision By', 'Status'];
       const lines = data.map(row => [row.sdNumber, row.stationName, row.equipmentName || row.feederName || '', row.shutdownType, row.requestedAt, dt.format(new Date(row.plannedStart)), dt.format(new Date(row.expectedRestoration)), row.requestedByName, row.decisionByName || '—', labels[row.status]].map(cell).join(','));
-      downloadCsvFile([headers.map(cell).join(','), ...lines].join('\n'), 'shutdown-report.csv');
+      await downloadCsvFile([headers.map(cell).join(','), ...lines].join('\n'), 'shutdown-report.csv');
     } catch (cause) { window.alert(cause instanceof Error ? cause.message : 'Could not export CSV.'); }
     finally { setExporting(false); }
   };

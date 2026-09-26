@@ -30,7 +30,8 @@ const emptyState: ShiftDutyState = {
 
 const DUTY_TABLES = [
   'shift_handovers', 'shift_duty_handover_states', 'shift_duty_sessions',
-  'station_shifts', 'station_shift_assignments', 'notification_events', 'notification_recipients',
+  'station_shifts', 'station_shift_assignments', 'shift_handover_unattended_states',
+  'notification_events', 'notification_recipients',
 ] as const;
 const POLL_INTERVAL_MS = 30_000;
 

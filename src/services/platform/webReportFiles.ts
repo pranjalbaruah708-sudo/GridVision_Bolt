@@ -93,11 +93,14 @@ export function printReportElement(content: HTMLElement, title: string, table?: 
   window.setTimeout(() => printWindow.print(), 250);
 }
 
-export function downloadCsvFile(contents: string, fileName: string): void {
-  const url = URL.createObjectURL(new Blob([contents], { type: 'text/csv;charset=utf-8;' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+export async function downloadCsvFile(contents: string, fileName: string): Promise<PdfFileResult> {
+  return persistCsvFile(fileName, contents, () => {
+    const url = URL.createObjectURL(new Blob([contents], { type: 'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
 }
+import { persistCsvFile, type PdfFileResult } from './pdfFile';

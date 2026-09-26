@@ -92,6 +92,7 @@ export type Interruption = {
   station_id: string;
   feeder_id: string | null;
   operator_id: string | null;
+  operator_name?: string | null;
 
   interruption_start: string;
   interruption_end: string | null;
@@ -188,6 +189,7 @@ export type LogBookEntry = {
   station_id: string;
   feeder_id: string | null;
   operator_id: string | null;
+  operator_name?: string | null;
 
   actual_event_time: string;
 
