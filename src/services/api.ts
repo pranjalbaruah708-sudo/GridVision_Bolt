@@ -54,6 +54,7 @@ import type {
   ReliabilityIndex,
   Station,
 } from '@/types';
+import type { StationCondition } from '@/types/operational';
 import type { AppRole } from '@/security/permissions';
 import { recordStorageFailure, recordSyncCompleted, recordSyncStarted } from './diagnostics';
 import { isQueueSyncAuthorized } from './syncAuthorization';
@@ -3904,6 +3905,32 @@ async getNotificationDeliveryReportPage(startIso: string, endIso: string, page: 
     const { data, error, count } = await query;
     if (error) throw error;
     return { rows: (data ?? []) as Interruption[], total: count ?? 0 };
+  },
+
+  async getStationConditionReportPage(
+    startIso: string,
+    endIso: string,
+    accessibleStationIds: string[],
+    page: number,
+    pageSize: number,
+    stationId: string | null = null,
+    status: 'OPEN' | 'RECTIFIED' | null = null,
+  ): Promise<{ rows: StationCondition[]; total: number }> {
+    if (accessibleStationIds.length === 0) return { rows: [], total: 0 };
+    let query = supabase
+      .from('station_conditions')
+      .select('id,station_id,observed_at,category,equipment_area,condition,observation,status,recorded_by,created_at,updated_at,rectified_at,rectified_by,client_operation_id,entry_mode,recorded_at,synced_at', { count: 'exact' })
+      .in('station_id', accessibleStationIds)
+      .gte('observed_at', startIso)
+      .lt('observed_at', endIso)
+      .order('observed_at', { ascending: false })
+      .order('updated_at', { ascending: false })
+      .range(page * pageSize, page * pageSize + pageSize - 1);
+    if (stationId) query = query.eq('station_id', stationId);
+    if (status) query = query.eq('status', status);
+    const { data, error, count } = await query;
+    if (error) throw error;
+    return { rows: (data ?? []) as StationCondition[], total: count ?? 0 };
   },
 
   async getFeedersForStations(

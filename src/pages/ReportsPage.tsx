@@ -44,7 +44,8 @@ export type ReportType =
   | 'shift-attendance'
   | 'operator-duty'
   | 'shift-handover'
-  | 'shift-compliance';
+  | 'shift-compliance'
+  | 'station-condition';
 
 type ReportGroup =
   | 'Quick Reports'
@@ -115,6 +116,15 @@ export const REPORT_DEFINITIONS: ReportDefinition[] = [
     description: 'Review parameter observations requiring attention.',
     icon: ShieldCheck,
     tone: 'bg-amber-50 text-amber-600',
+    implemented: true,
+  },
+  {
+    type: 'station-condition',
+    group: 'Operational Reports',
+    title: 'Station Condition',
+    description: 'Review recorded station and equipment observations.',
+    icon: ClipboardCheck,
+    tone: 'bg-amber-50 text-amber-700',
     implemented: true,
   },
   {
@@ -211,7 +221,7 @@ const REPORT_ROUTE_SUB: Record<ReportType, string> = {
   'station-performance': 'station-performance-report', 'feeder-performance': 'feeder-performance-report',
   'executive-summary': 'executive-summary-report', 'operator-activity': 'operator-activity-report',
   'notification-delivery': 'notification-delivery-report', 'shift-attendance': 'shift-attendance-report',
-  'shift-handover': 'shift-handover-report', 'shift-compliance': 'shift-compliance-report', 'operator-duty': 'operator-duty-report',
+  'shift-handover': 'shift-handover-report', 'shift-compliance': 'shift-compliance-report', 'operator-duty': 'operator-duty-report', 'station-condition': 'station-condition-report',
 };
 
 export function getAvailableReportNavigation(role: AppRole) {

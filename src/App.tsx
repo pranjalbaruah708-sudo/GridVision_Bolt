@@ -40,6 +40,7 @@ import { DataCompletenessReportPage } from '@/pages/Reports/DataCompletenessRepo
 import { ParameterExceptionReportPage } from '@/pages/Reports/ParameterExceptionReportPage';
 import { ShiftAttendanceReportPage } from '@/pages/Reports/ShiftAttendanceReportPage';
 import { OperatorDutyReportPage } from '@/pages/Reports/OperatorDutyReportPage';
+import { StationConditionReportPage } from '@/pages/Reports/StationConditionReportPage';
 import { PerformanceReportPage } from '@/pages/Reports/PerformanceReportPage';
 import { ExecutiveSummaryReportPage } from '@/pages/Reports/ExecutiveSummaryReportPage';
 import { NotificationDeliveryReportPage, OperatorActivityReportPage } from '@/pages/Reports/AdministrativeReportPages';
@@ -568,6 +569,10 @@ function Shell() {
     return renderRoutedPage(<OperatorDutyReportPage onBack={returnToReports} />, 'reports');
   }
 
+  if (route.tab === 'reports' && route.sub === 'station-condition-report') {
+    return renderRoutedPage(<StationConditionReportPage onBack={returnToReports} />, 'reports');
+  }
+
   if (route.tab === 'reports' && route.sub === 'shift-handover-report') {
   return renderRoutedPage(
     <ShiftHandoverReportPage onBack={returnToReports} />,
@@ -811,6 +816,9 @@ function Shell() {
             }
             if (reportType === 'operator-duty') {
               go({ tab: 'reports', sub: 'operator-duty-report' });
+            }
+            if (reportType === 'station-condition') {
+              go({ tab: 'reports', sub: 'station-condition-report' });
             }
             if (reportType === 'shift-handover') {
               go({
