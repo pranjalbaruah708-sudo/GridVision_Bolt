@@ -1,11 +1,8 @@
-import "@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import {
+  HttpRequestError, allowedOrigins, corsHeadersFor, isIsoTimestamp, isUuid,
+  jsonResponse, readJsonObject, rejectDisallowedOrigin,
+} from "../_shared/httpSecurity.ts";
 
 interface NotificationRequest {
   user_id: string;
@@ -21,6 +18,21 @@ interface NotificationRequest {
 }
 
 const MAX_REQUEST_BYTES = 16 * 1024;
+const REQUEST_KEYS = new Set([
+  "user_id", "title", "body", "notification_class", "event_time",
+  "source_recorded_at", "source_synced_at", "station_id", "feeder_id", "message",
+]);
+
+function firebaseErrorCode(value: unknown): string {
+  if (!value || typeof value !== "object") return "FCM_REQUEST_FAILED";
+  const error = "error" in value && value.error && typeof value.error === "object"
+    ? value.error as Record<string, unknown>
+    : value as Record<string, unknown>;
+  const status = typeof error.status === "string" && /^[A-Z0-9_]{1,80}$/.test(error.status)
+    ? error.status
+    : null;
+  return status ?? "FCM_REQUEST_FAILED";
+}
 
 function constantTimeEqual(left: string, right: string): boolean {
   const leftBytes = new TextEncoder().encode(left);
@@ -147,9 +159,7 @@ async function createFirebaseAccessToken(
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(
-      `Firebase OAuth error: ${JSON.stringify(data)}`,
-    );
+    throw new Error("Firebase OAuth request failed");
   }
 
   return data.access_token as string;
@@ -160,6 +170,11 @@ Deno.serve(async (req) => {
   // CORS
   // --------------------------------------------------
 
+  const origins = allowedOrigins(Deno.env.get("ALLOWED_ORIGINS"));
+  const corsHeaders = corsHeadersFor(req, origins);
+  const originError = rejectDisallowedOrigin(req, origins, corsHeaders);
+  if (originError) return originError;
+
   if (req.method === "OPTIONS") {
     return new Response("ok", {
       headers: corsHeaders,
@@ -167,10 +182,7 @@ Deno.serve(async (req) => {
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ success: false, error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json", "Allow": "POST" },
-    });
+    return jsonResponse({ success: false, error: "Method not allowed" }, 405, { ...corsHeaders, Allow: "POST" });
   }
 
   try {
@@ -185,10 +197,7 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!supabaseServiceRoleKey || !isServiceRoleRequest(req, supabaseServiceRoleKey)) {
-      return new Response(JSON.stringify({ success: false, error: "Unauthorised" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ success: false, error: "Unauthorised" }, 401, corsHeaders);
     }
 
     const firebaseProjectId =
@@ -213,25 +222,8 @@ Deno.serve(async (req) => {
     // Request body
     // --------------------------------------------------
 
-    const rawBody = await req.text();
-    if (new TextEncoder().encode(rawBody).length > MAX_REQUEST_BYTES) {
-      return new Response(JSON.stringify({ success: false, error: "Request is too large" }), {
-        status: 413,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    let requestBody: NotificationRequest;
-    try {
-      const parsed: unknown = JSON.parse(rawBody);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid JSON object");
-      requestBody = parsed as NotificationRequest;
-    } catch {
-      return new Response(JSON.stringify({ success: false, error: "Invalid JSON request" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const parsedBody = await readJsonObject(req, MAX_REQUEST_BYTES);
+    const requestBody = parsedBody as unknown as NotificationRequest;
 
     const {
       user_id,
@@ -248,52 +240,22 @@ Deno.serve(async (req) => {
 
     if (
       typeof user_id !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(user_id) ||
-      typeof title !== "string" || title.length < 1 || title.length > 160 ||
-      typeof body !== "string" || body.length < 1 || body.length > 2000
+      !isUuid(user_id) || Object.keys(parsedBody).some((key) => !REQUEST_KEYS.has(key)) ||
+      typeof title !== "string" || title.trim().length < 1 || title.length > 160 ||
+      typeof body !== "string" || body.trim().length < 1 || body.length > 2000 ||
+      (notification_class !== undefined && !["LIVE", "DELAYED_SYNC", "HISTORICAL_SYNC"].includes(notification_class)) ||
+      (event_time !== undefined && !isIsoTimestamp(event_time)) ||
+      (source_recorded_at !== undefined && !isIsoTimestamp(source_recorded_at)) ||
+      (source_synced_at !== undefined && !isIsoTimestamp(source_synced_at)) ||
+      (station_id !== undefined && !isUuid(station_id)) ||
+      (feeder_id !== undefined && !isUuid(feeder_id)) ||
+      (message !== undefined && (typeof message !== "string" || message.length > 2000))
     ) {
-      return new Response(JSON.stringify({ success: false, error: "Invalid notification request" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ success: false, error: "Invalid notification request" }, 400, corsHeaders);
     }
 
     const displayTitle = presentationTitle(title, notification_class);
     const showDisplayTitle = displayTitle.trim().toLocaleLowerCase() !== "gridvision notification";
-
-    if (!user_id) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "user_id is required",
-        }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type":
-              "application/json",
-          },
-        },
-      );
-    }
-
-    if (!title || !body) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "title and body are required",
-        }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type":
-              "application/json",
-          },
-        },
-      );
-    }
 
     console.log("Looking for registered notification devices.");
 
@@ -309,32 +271,12 @@ Deno.serve(async (req) => {
         .eq("is_active", true);
 
     if (deviceError) {
-      console.error(
-        "Device token query error:",
-        deviceError,
-      );
-
-      throw new Error(
-        `Unable to retrieve device tokens: ${deviceError.message}`,
-      );
+      console.error("Device token query failed.");
+      throw new Error("Unable to retrieve device tokens");
     }
 
     if (!devices || devices.length === 0) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          message:
-            "No active device token found for this user",
-        }),
-        {
-          status: 404,
-          headers: {
-            ...corsHeaders,
-            "Content-Type":
-              "application/json",
-          },
-        },
-      );
+      return jsonResponse({ success: false, message: "No active device token found for this user" }, 404, corsHeaders);
     }
 
     console.log(
@@ -408,15 +350,12 @@ Deno.serve(async (req) => {
           await firebaseResponse.json();
 
         if (!firebaseResponse.ok) {
-          console.error(
-            "Firebase error:",
-            firebaseResult,
-          );
+          const errorCode = firebaseErrorCode(firebaseResult);
+          console.error("Firebase notification request failed:", errorCode);
 
           results.push({
-            device_id: device.id,
             success: false,
-            error: firebaseResult,
+            error_code: errorCode,
           });
 
           continue;
@@ -425,20 +364,14 @@ Deno.serve(async (req) => {
         console.log("Notification sent successfully.");
 
         results.push({
-          device_id: device.id,
           success: true,
-          firebase: firebaseResult,
         });
       } catch (error) {
-        console.error(
-          `Error sending to device ${device.id}:`,
-          error,
-        );
+        console.error("Notification delivery failed for a registered device.");
 
         results.push({
-          device_id: device.id,
           success: false,
-          error: String(error),
+          error_code: error instanceof HttpRequestError ? "INVALID_REQUEST" : "DELIVERY_FAILED",
         });
       }
     }
@@ -447,40 +380,17 @@ Deno.serve(async (req) => {
       (r) => r.success,
     ).length;
 
-    return new Response(
-      JSON.stringify({
-        success: successCount > 0,
-        message: `Notification sent to ${successCount} of ${devices.length} device(s)`,
-        results,
-      }),
-      {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          "Content-Type":
-            "application/json",
-        },
-      },
-    );
+    return jsonResponse({
+      success: successCount > 0,
+      message: `Notification sent to ${successCount} of ${devices.length} device(s)`,
+      sent: successCount,
+      failed: devices.length - successCount,
+    }, 200, corsHeaders);
   } catch (error) {
-    console.error(
-      "Send notification function error:",
-      error,
-    );
-
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: String(error),
-      }),
-      {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type":
-            "application/json",
-        },
-      },
-    );
+    if (error instanceof HttpRequestError) {
+      return jsonResponse({ success: false, error: error.publicMessage }, error.status, corsHeaders);
+    }
+    console.error("Send notification function failed.");
+    return jsonResponse({ success: false, error: "Unable to send notification" }, 500, corsHeaders);
   }
 });

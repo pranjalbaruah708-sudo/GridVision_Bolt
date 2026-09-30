@@ -1,10 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-gridvision-scheduler-secret",
-};
+import {
+  HttpRequestError, allowedOrigins, corsHeadersFor, isUuid, jsonResponse,
+  readJsonObject, rejectDisallowedOrigin,
+} from "../_shared/httpSecurity.ts";
 
 interface PendingRecipient {
   id: string;
@@ -28,6 +26,16 @@ interface NotificationEvent {
 }
 
 const MAX_REQUEST_BYTES = 4 * 1024;
+
+function firebaseErrorCode(value: unknown): string {
+  if (!value || typeof value !== "object") return "FCM_REQUEST_FAILED";
+  const error = "error" in value && value.error && typeof value.error === "object"
+    ? value.error as Record<string, unknown>
+    : value as Record<string, unknown>;
+  return typeof error.status === "string" && /^[A-Z0-9_]{1,80}$/.test(error.status)
+    ? error.status
+    : "FCM_REQUEST_FAILED";
+}
 
 function constantTimeEqual(left: string, right: string): boolean {
   const leftBytes = new TextEncoder().encode(left);
@@ -183,9 +191,7 @@ async function getFirebaseAccessToken(
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(
-      `Firebase OAuth error: ${JSON.stringify(data)}`,
-    );
+    throw new Error("Firebase OAuth request failed");
   }
 
   return data.access_token;
@@ -196,6 +202,15 @@ Deno.serve(async (req) => {
   // CORS
   // ==================================================
 
+  const origins = allowedOrigins(Deno.env.get("ALLOWED_ORIGINS"));
+  const corsHeaders = corsHeadersFor(
+    req,
+    origins,
+    "authorization, x-client-info, apikey, content-type, x-gridvision-scheduler-secret",
+  );
+  const originError = rejectDisallowedOrigin(req, origins, corsHeaders);
+  if (originError) return originError;
+
   if (req.method === "OPTIONS") {
     return new Response("ok", {
       headers: corsHeaders,
@@ -203,12 +218,10 @@ Deno.serve(async (req) => {
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ success: false, error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json", "Allow": "POST" },
-    });
+    return jsonResponse({ success: false, error: "Method not allowed" }, 405, { ...corsHeaders, Allow: "POST" });
   }
 
+  let releaseLease: (() => Promise<void>) | null = null;
   try {
     // ==================================================
     // Environment variables
@@ -248,9 +261,7 @@ Deno.serve(async (req) => {
       !firebaseClientEmail ||
       !firebasePrivateKey
     ) {
-      throw new Error(
-        "Required environment variables are missing.",
-      );
+      throw new Error("Required environment variables are missing");
     }
 
     if (
@@ -260,10 +271,7 @@ Deno.serve(async (req) => {
         notificationSchedulerSecret,
       )
     ) {
-      return new Response(JSON.stringify({ success: false, error: "Unauthorised" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ success: false, error: "Unauthorised" }, 401, corsHeaders);
     }
 
     // ==================================================
@@ -274,13 +282,42 @@ Deno.serve(async (req) => {
       supabaseUrl,
       supabaseServiceRoleKey,
     );
+    const leaseOwner = crypto.randomUUID();
+    const { data: leaseAcquired, error: leaseError } = await supabaseAdmin.rpc(
+      "acquire_edge_function_lease",
+      { p_lease_name: "send-pending-notifications", p_owner: leaseOwner, p_lease_seconds: 300 } as never,
+    );
+    if (leaseError || typeof leaseAcquired !== "boolean") {
+      throw new Error("Notification worker lease is unavailable");
+    }
+    if (!leaseAcquired) {
+      return jsonResponse({ success: false, error: "Notification processing is already running" }, 409, corsHeaders);
+    }
+    releaseLease = async () => {
+      await supabaseAdmin.rpc("release_edge_function_lease", {
+        p_lease_name: "send-pending-notifications",
+        p_owner: leaseOwner,
+      } as never);
+    };
+
+    const parsedBody = await readJsonObject(req, MAX_REQUEST_BYTES, { allowEmpty: true });
+    if (Object.keys(parsedBody).some((key) => key !== "notification_event_id")) {
+      throw new HttpRequestError(400, "Invalid JSON request");
+    }
+    const notificationEventId = parsedBody.notification_event_id;
+    if (notificationEventId !== undefined && !isUuid(notificationEventId)) {
+      throw new HttpRequestError(400, "Invalid notification event identifier");
+    }
+    const requestBody: { notification_event_id?: string } = notificationEventId === undefined
+      ? {}
+      : { notification_event_id: notificationEventId };
 
     // Prepare roster-targeted shift reminders before draining the delivery queue.
     const { error: shiftReminderError } = await supabaseAdmin.rpc(
       "prepare_upcoming_shift_duty_notifications",
     );
     if (shiftReminderError) {
-      console.error("Upcoming shift reminders could not be prepared:", shiftReminderError.message);
+      console.error("Upcoming shift reminders could not be prepared.");
     }
 
     // ==================================================
@@ -296,38 +333,6 @@ Deno.serve(async (req) => {
     //
     // { "notification_event_id": "..." }
     // ==================================================
-
-    let requestBody: {
-      notification_event_id?: string;
-    } = {};
-
-    const rawBody = await req.text();
-    if (new TextEncoder().encode(rawBody).length > MAX_REQUEST_BYTES) {
-      return new Response(JSON.stringify({ success: false, error: "Request is too large" }), {
-        status: 413,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    if (rawBody.trim()) {
-      try {
-        const parsed: unknown = JSON.parse(rawBody);
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid JSON object");
-        const keys = Object.keys(parsed as Record<string, unknown>);
-        if (keys.some((key) => key !== "notification_event_id")) throw new Error("Unexpected property");
-        const notificationEventId = (parsed as Record<string, unknown>).notification_event_id;
-        if (
-          notificationEventId !== undefined &&
-          (typeof notificationEventId !== "string" ||
-            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(notificationEventId))
-        ) throw new Error("Invalid notification event identifier");
-        requestBody = notificationEventId === undefined ? {} : { notification_event_id: notificationEventId };
-      } catch {
-        return new Response(JSON.stringify({ success: false, error: "Invalid JSON request" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
 
     // ==================================================
     // Find pending notification recipients
@@ -374,22 +379,7 @@ Deno.serve(async (req) => {
         "No pending notification recipients found.",
       );
 
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message:
-            "No pending notifications found.",
-          processed: 0,
-        }),
-        {
-          status: 200,
-          headers: {
-            ...corsHeaders,
-            "Content-Type":
-              "application/json",
-          },
-        },
-      );
+      return jsonResponse({ success: true, message: "No pending notifications found.", processed: 0 }, 200, corsHeaders);
     }
 
     console.log(
@@ -428,7 +418,7 @@ Deno.serve(async (req) => {
               sent_at: new Date().toISOString(),
             })
             .eq("id", recipient.id);
-          results.push({ recipient_id: recipient.id, success: true, in_app_only: true });
+          results.push({ success: true, in_app_only: true });
           continue;
         }
 
@@ -582,14 +572,11 @@ Deno.serve(async (req) => {
         // ----------------------------------------------
 
         if (!firebaseResponse.ok) {
-          const errorMessage =
-            JSON.stringify(
-              firebaseResult,
-            );
+          const errorCode = firebaseErrorCode(firebaseResult);
 
           console.error(
-            `FCM failed for recipient ${recipient.id}:`,
-            errorMessage,
+            "FCM delivery failed for a notification recipient:",
+            errorCode,
           );
 
           await supabaseAdmin
@@ -599,7 +586,7 @@ Deno.serve(async (req) => {
             .update({
               status: "FAILED",
               delivery_message:
-                errorMessage,
+                errorCode,
             })
             .eq(
               "id",
@@ -607,13 +594,8 @@ Deno.serve(async (req) => {
             );
 
           results.push({
-            recipient_id:
-              recipient.id,
-
             success: false,
-
-            error:
-              firebaseResult,
+            error_code: errorCode,
           });
 
           continue;
@@ -630,12 +612,9 @@ Deno.serve(async (req) => {
           .from(
             "notification_recipients",
           )
-          .update({
-            status: "SENT",
-            delivery_message:
-              JSON.stringify(
-                firebaseResult,
-              ),
+            .update({
+              status: "SENT",
+              delivery_message: "FCM accepted",
             sent_at: sentAt,
           })
           .eq(
@@ -646,33 +625,20 @@ Deno.serve(async (req) => {
         console.log("Notification sent successfully to its recipient.");
 
         results.push({
-          recipient_id:
-            recipient.id,
-
           success: true,
-
-          firebase:
-            firebaseResult,
         });
       } catch (error) {
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : String(error);
-
-        console.error(
-          `❌ Error processing recipient ${recipient.id}:`,
-          errorMessage,
-        );
+        const errorCode = error instanceof HttpRequestError ? "INVALID_REQUEST" : "DELIVERY_FAILED";
+        console.error("Notification recipient processing failed:", errorCode);
 
         await supabaseAdmin
           .from(
             "notification_recipients",
           )
           .update({
-            status: "FAILED",
-            delivery_message:
-              errorMessage,
+              status: "FAILED",
+              delivery_message:
+                errorCode,
           })
           .eq(
             "id",
@@ -680,13 +646,8 @@ Deno.serve(async (req) => {
           );
 
         results.push({
-          recipient_id:
-            recipient.id,
-
           success: false,
-
-          error:
-            errorMessage,
+          error_code: errorCode,
         });
       }
     }
@@ -705,53 +666,19 @@ Deno.serve(async (req) => {
       results.length -
       successCount;
 
-    return new Response(
-      JSON.stringify({
-        success:
-          failedCount === 0,
-
-        processed:
-          results.length,
-
-        sent:
-          successCount,
-
-        failed:
-          failedCount,
-
-        results,
-      }),
-      {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          "Content-Type":
-            "application/json",
-        },
-      },
-    );
+    return jsonResponse({
+      success: failedCount === 0,
+      processed: results.length,
+      sent: successCount,
+      failed: failedCount,
+    }, 200, corsHeaders);
   } catch (error) {
-    console.error(
-      "Send pending notifications error:",
-      error,
-    );
-
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
-      }),
-      {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type":
-            "application/json",
-        },
-      },
-    );
+    if (error instanceof HttpRequestError) {
+      return jsonResponse({ success: false, error: error.publicMessage }, error.status, corsHeaders);
+    }
+    console.error("Send pending notifications function failed.");
+    return jsonResponse({ success: false, error: "Unable to process notifications" }, 500, corsHeaders);
+  } finally {
+    if (releaseLease) await releaseLease().catch(() => undefined);
   }
 });
